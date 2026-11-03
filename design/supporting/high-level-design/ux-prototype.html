@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SnooZap — Windows UX proposal</title>
+<style>
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font:14px/1.5 var(--font-sans,system-ui);color:var(--foreground,CanvasText)}
+button,input,select{font:inherit;color:inherit}
+button,select{cursor:pointer}
+button{border:1px solid var(--border,ButtonBorder);border-radius:var(--radius,8px);background:var(--secondary,ButtonFace);padding:8px 12px;line-height:1.25;min-height:36px}
+button:hover{filter:brightness(.96)}
+button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--ring,Highlight);outline-offset:3px}
+button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--primary,Highlight);color:var(--primary-foreground,HighlightText);border-color:var(--primary,Highlight)}
+button.quiet{background:transparent;border-color:transparent}
+button.selected{border-color:var(--primary,Highlight);box-shadow:inset 0 0 0 1px var(--primary,Highlight)}
+select,input[type=number]{background:var(--card,Canvas);border:1px solid var(--border,ButtonBorder);border-radius:var(--radius,8px);padding:7px 9px;min-height:36px;max-width:100%}
+input[type=checkbox]{accent-color:var(--primary,Highlight);width:16px;height:16px;vertical-align:middle}
+p,h1,h2,h3{margin:0}h1{font-size:23px;line-height:1.25;letter-spacing:-.35px}h2{font-size:16px}h3{font-size:14px}
+.prototype{max-width:728px;margin:0 auto}
+.review-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.review-tools:empty{display:none}
+.review-tools label{display:flex;gap:7px;align-items:center;font-size:12px;color:var(--muted-foreground,GrayText)}
+.review-tools select{font-size:12px;min-height:32px;padding:5px 7px}
+.sample{font-size:11px;color:var(--muted-foreground,GrayText);margin-left:auto}
+.window,.tray-wrap,.terminal-wrap,.wake-wrap{background:var(--card,Canvas);border:1px solid var(--border,ButtonBorder);border-radius:var(--radius,10px);padding:16px}
+.window-head{display:flex;align-items:center;gap:9px;margin-bottom:15px}
+.app-mark{display:inline-grid;place-items:center;background:var(--primary,Highlight);color:var(--primary-foreground,HighlightText);width:28px;height:28px;border-radius:7px;font-size:19px;font-weight:700}
+.window-head .close{margin-left:auto;font-size:18px;padding:2px 10px;min-height:28px}
+.small{font-size:12px;color:var(--muted-foreground,GrayText)}
+.tabs{display:flex;border-bottom:1px solid var(--border,ButtonBorder);gap:3px;margin-bottom:18px}
+.tabs button{border:none;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:9px 13px}
+.tabs button[aria-current=page]{border-bottom-color:var(--primary,Highlight);font-weight:650}
+.status-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:15px}
+.status-symbol{font-size:22px;line-height:1.3;min-width:24px;color:var(--success,Highlight)}
+.status-symbol.warning{color:var(--warning,Highlight)}.status-symbol.error{color:var(--destructive,Highlight)}
+.status-head p{margin-top:6px;color:var(--muted-foreground,GrayText)}
+.mode-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:15px}
+.pill{font-size:11px;line-height:1.5;padding:3px 8px;border-radius:20px;border:1px solid var(--border,ButtonBorder);white-space:nowrap}
+.pill.accent{background:var(--accent-surface,var(--secondary,ButtonFace));border-color:var(--primary,Highlight)}
+.actions{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px}
+.actions select{max-width:160px}
+.notice{padding:12px 16px;border-radius:var(--radius,8px);background:var(--warning-surface,var(--secondary,ButtonFace));margin:15px 0;border:1px solid var(--border,ButtonBorder)}
+.notice.error{background:var(--destructive-surface,var(--secondary,ButtonFace))}
+.section{border-top:1px solid var(--border,ButtonBorder);margin-top:20px;padding-top:16px}
+.section-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+.row{display:flex;align-items:center;gap:12px;justify-content:space-between;padding:13px 0;border-bottom:1px solid var(--border,ButtonBorder)}
+.row:last-child{border-bottom:0}
+.row .grow{flex:1;min-width:0}.row p{margin-top:3px}
+.state-text{font-size:12px;font-weight:600;white-space:nowrap}
+.footer{display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap;margin-top:18px;padding-top:12px;border-top:1px solid var(--border,ButtonBorder);font-size:11px;color:var(--muted-foreground,GrayText)}
+.empty{background:var(--secondary,ButtonFace);padding:16px;border-radius:var(--radius,8px);margin-top:20px}
+.empty p{margin:6px 0 12px;color:var(--muted-foreground,GrayText)}
+.empty .actions{margin:0}
+.inline-reasons{margin-top:10px;padding:12px 16px;background:var(--secondary,ButtonFace);border-radius:var(--radius,8px)}
+.inline-reasons p+p{margin-top:5px}
+.field{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0}
+.field input[type=number]{width:85px}
+.field label{flex:1}.settings-group{margin-bottom:20px}
+details{margin-top:12px}summary{cursor:pointer;font-weight:600}
+.call{display:grid;grid-template-columns:54px 1fr 60px 50px;gap:8px;padding:12px 0;border-bottom:1px solid var(--border,ButtonBorder);font-size:12px}
+.call.header{color:var(--muted-foreground,GrayText);font-size:11px}
+.rule-description{font-size:13px;margin:5px 0;color:var(--muted-foreground,GrayText)}
+.rule-chip{font:11px var(--font-mono,monospace);display:inline-block;padding:5px 8px;background:var(--secondary,ButtonFace);border-radius:5px;margin-top:6px}
+.tray-wrap{max-width:360px;margin:0 auto}.tray-title{display:flex;gap:8px;align-items:center;margin-bottom:12px;font-weight:600}
+.native-menu{padding:4px;border:1px solid var(--border,ButtonBorder);border-radius:var(--radius,8px);background:var(--popover,Canvas)}
+.native-menu button{width:100%;display:flex;align-items:center;gap:9px;text-align:left;border:none;background:transparent;padding:9px 10px;border-radius:4px}
+.native-menu .check{width:18px;text-align:center}.native-menu hr{border:none;border-top:1px solid var(--border,ButtonBorder);margin:5px 8px}
+.native-menu button:hover{background:var(--secondary,ButtonFace);filter:none}
+.submenu{margin:2px 8px 8px 26px;border-left:2px solid var(--border,ButtonBorder);padding-left:6px}
+.taskbar{margin-top:16px;display:flex;gap:12px;align-items:center;justify-content:flex-end;padding:12px 16px;background:var(--secondary,ButtonFace);border-radius:var(--radius,8px)}
+.taskbar button{padding:4px 10px;font-size:18px;min-height:30px}
+.terminal-wrap{background:var(--code-background,var(--card,Canvas));font-family:var(--font-mono,monospace);font-size:12px}
+.terminal-title{border-bottom:1px solid var(--border,ButtonBorder);padding-bottom:12px;margin-bottom:16px;display:flex;justify-content:space-between;gap:10px}
+.terminal-status{font-size:18px;font-weight:700;margin-bottom:8px}.terminal-section{margin-top:20px}.terminal-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--border,ButtonBorder)}
+.terminal-keys{display:flex;flex-wrap:wrap;gap:6px;margin-top:22px}.terminal-keys button{font:12px var(--font-mono,monospace);padding:7px 9px}
+kbd{font-family:var(--font-mono,monospace);font-weight:700}
+.wake-wrap{max-width:500px;margin:0 auto}.wake-wrap h1{margin:12px 0 5px}.wake-wrap>.small{margin-bottom:18px}
+.wake-target{border-top:1px solid var(--border,ButtonBorder);padding:18px 0}.wake-target .row{border:0;padding:0}.wake-feedback{margin-top:12px;font-size:13px}
+.caption{font-size:11px;color:var(--muted-foreground,GrayText);margin:10px 0 0}
+#toast{min-height:22px;margin-top:10px;font-size:12px;color:var(--muted-foreground,GrayText)}
+dialog{color:var(--foreground,CanvasText);background:var(--card,Canvas);border:1px solid var(--border,ButtonBorder);border-radius:var(--radius,10px);padding:20px;max-width:min(400px,90%)}
+dialog::backdrop{background:color-mix(in srgb,var(--foreground,CanvasText) 20%,transparent)}
+dialog p{margin:10px 0 16px;color:var(--muted-foreground,GrayText)}dialog .actions{justify-content:flex-end;margin:18px 0 0}
+.closed{text-align:center;padding:45px 10px}.closed p{margin:9px 0 18px}
+@media(max-width:480px){h1{font-size:20px}.tabs button{padding:9px 10px}.actions{display:grid;grid-template-columns:1fr 1fr}.actions button,.actions select{width:100%;min-width:0;max-width:none}.sample{flex:1 1 100%;margin-left:0}.review-tools label{display:block;flex:1 1 calc(50% - 8px);min-width:0}.review-tools select{display:block;width:100%;margin-top:4px}.call{grid-template-columns:44px 1fr 44px 34px;gap:4px;font-size:11px}.row{gap:7px}.row button{font-size:12px;padding:7px 9px}.footer{font-size:10px}.terminal-keys button{flex:1}}
+</style>
+</head>
+<body>
+<main class="prototype">
+  <div class="review-tools" aria-label="Prototype examples">
+    <label>View <select id="view"><option value="desktop">Desktop window</option><option value="tray">Tray menu</option><option value="tui">TUI</option><option value="wake">Wake page</option></select></label>
+    <label>Example <select id="scenario"><option value="active">T3 working</option><option value="idle">No active work</option><option value="retained">T3 not responding</option><option value="startup">Starting up</option><option value="battery">Battery below limit</option><option value="failure">OS request failed</option><option value="empty">First launch</option></select></label>
+    <span class="sample">Synthetic data · no system changes</span>
+  </div>
+  <div id="review-actions" class="review-tools" aria-label="Prototype-only transitions"></div>
+  <div id="surface"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <p class="caption">Interactive UX proposal. Controls and connections are simulated. The TUI example is attached to an existing runtime.</p>
+</main>
+<dialog id="duration-dialog" aria-labelledby="duration-title">
+  <form id="duration-form">
+    <h2 id="duration-title">Stay awake for…</h2>
+    <p>At the end, SnooZap returns to Auto. Active work can still keep the computer awake.</p>
+    <label class="field">Duration in minutes <input id="minutes" type="number" min="0.1" step="any" value="60" required></label>
+    <div class="actions"><button type="button" data-action="cancel-duration">Cancel</button><button class="primary" type="submit">Stay awake</button></div>
+  </form>
+</dialog>
+<dialog id="connect-dialog" aria-labelledby="connect-title">
+  <h2 id="connect-title">Connect local T3</h2>
+  <p>Choose where T3 is running on this computer.</p>
+  <label class="field">Environment <select id="local-environment"><option>Windows</option><option>WSL · Ubuntu</option></select></label>
+  <p>T3 opens its own sign-in page for read-only access. Manual Stay awake works while you connect.</p>
+  <div class="actions"><button type="button" data-action="cancel-connect">Cancel</button><button type="button" class="primary" data-action="connect">Connect to T3</button></div>
+</dialog>
+<script>
+(() => {
+'use strict';
+const S={view:'desktop',tab:'Status',scenario:'active',mode:'auto',until:null,monitoring:true,host:false,target:false,remote:false,autostart:false,floor:20,resume:25,details:false,submenu:false,closed:false,historyCleared:false,wake:'not_seen',events:['Automatic hold started · T3 active','T3 check succeeded · 3 active chats','SnooZap started in Auto']};
+const scenarios={active:{activity:'active',battery:76,source:'AC'},idle:{activity:'inactive',battery:76,source:'AC'},retained:{activity:'unknown',retained:true,battery:76,source:'AC'},startup:{activity:'unknown',battery:76,source:'AC'},battery:{activity:'active',battery:18,source:'Battery'},failure:{activity:'active',fail:true,battery:76,source:'AC'},empty:{activity:'inactive',empty:true,battery:76,source:'AC'}};
+const $=id=>document.getElementById(id);
+const e=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const toast=s=>{$('toast').textContent=s;};
+const record=s=>{S.events.unshift(s);S.events=S.events.slice(0,12);S.historyCleared=false;};
+function remaining(){if(!S.until)return '';const n=Math.max(0,Math.ceil((S.until-Date.now())/1000));return n>=3600?Math.floor(n/3600)+'h '+Math.ceil(n%3600/60)+'m':Math.floor(n/60)+'m '+String(n%60).padStart(2,'0')+'s';}
+function state(){
+ const c=scenarios[S.scenario],auto=S.monitoring&&(c.activity==='active'||c.retained),wanted=S.mode==='awake'||(S.mode==='auto'&&(auto||S.host));
+ const blocked=wanted&&c.source==='Battery'&&c.battery<=S.floor,failed=wanted&&!blocked&&c.fail,accepted=wanted&&!blocked&&!failed;
+ let title='Normal sleep allowed',reason=S.mode==='allow-sleep'?'Allow sleep is selected. Active work will not create a SnooZap hold.':!S.monitoring?'Automatic monitoring is paused.':'No automatic rule matches.',symbol='◯',tone='';
+ if(accepted){title='Keeping awake';symbol='●';reason=S.mode==='awake'?(S.until?'Manual · '+remaining()+' remaining, then Auto':'Manual · until turned off or SnooZap exits'):auto?(c.retained?'T3 activity is unconfirmed. Keeping the last active hold.':'T3 has 3 active chats: 2 running, 1 waiting.'):'Wake host · this computer stays available to wake others.';if(S.mode==='auto'&&c.retained){title='Keeping awake · unconfirmed';tone='warning';symbol='◐';}}
+ else if(blocked){title='Sleep prevention paused';reason='Battery '+c.battery+'% · your limit is '+S.floor+'%. Resumes at '+S.resume+'% or on AC.';symbol='◐';tone='warning';}
+ else if(failed){title='Sleep prevention failed';reason='Windows did not accept the request. SnooZap cannot currently prevent sleep.';symbol='!';tone='error';}
+ else if(S.mode==='auto'&&S.monitoring&&c.activity==='unknown'){title='Activity unconfirmed';reason='T3 has not connected. No automatic hold yet.';symbol='◐';tone='warning';}
+ return {c,auto,wanted,blocked,failed,accepted,title,reason,symbol,tone};
+}
+function modeName(){return S.mode==='awake'?'Stay awake':S.mode==='allow-sleep'?'Allow sleep':'Auto';}
+function actions(){return `<div class="actions"><button data-action="awake" class="primary">Stay awake</button><select data-duration aria-label="Stay awake for a duration"><option value="">Stay awake for…</option><option value="15">15 minutes</option><option value="60">1 hour</option><option value="240">4 hours</option><option value="custom">Custom…</option></select><button data-action="auto" class="${S.mode==='auto'?'selected':''}" aria-pressed="${S.mode==='auto'}">Auto</button><button data-action="allow-sleep" class="${S.mode==='allow-sleep'?'selected':''}" aria-pressed="${S.mode==='allow-sleep'}">Allow sleep</button></div>`;}
+function probeRows(){const q=state(),unknown=q.c.activity==='unknown',label=!S.monitoring?'Paused':unknown?'Unknown':q.c.activity==='active'?'3 active chats':'No active chats',sub=!S.monitoring?'Enable monitoring on Rules':unknown?(q.c.retained?'Last confirmed active · 2 minutes ago':'No successful check yet'):'Last checked · 2 seconds ago';return `<div class="row"><div class="grow"><strong>T3 · local environment</strong><p class="small">${sub}</p></div><span class="state-text">${label}</span>${unknown?'<button data-action="reconnect">Reconnect</button>':''}</div><div class="row"><div class="grow"><strong>Blender</strong><p class="small">Application presence · this computer</p></div><span class="state-text">${S.monitoring?'Not running':'Paused'}</span></div>`;}
+function statusPage(){const q=state();return `<section aria-label="Sleep prevention status"><div class="status-head"><span class="status-symbol ${q.tone}" aria-hidden="true">${q.symbol}</span><div><h1>${e(q.title)}</h1><p data-status-reason>${e(q.reason)}</p></div></div><div class="mode-line"><span class="pill accent">Mode: ${modeName()}</span>${S.until?`<span class="pill"><span data-countdown>${remaining()}</span> → Auto</span>`:''}${!S.monitoring?'<span class="pill">Monitoring paused</span>':''}</div>${actions()}<p class="small">Manual controls work independently of app activity. Battery limits still apply.</p>${q.blocked?`<div class="notice"><strong>Battery protection is in control.</strong><br>Your selected mode stays visible, but there is no accepted sleep-prevention request.</div>`:''}${q.failed?'<div class="notice error"><strong>Sleep prevention is unavailable.</strong><br><button data-action="retry">Retry request</button> <button data-action="history" class="quiet">Show details</button></div>':''}${S.scenario==='empty'?`<div class="empty"><h2>Automatic control is optional</h2><p>Use Stay awake now, or add the work you want SnooZap to watch.</p><div class="actions"><button data-action="add-t3">Add T3</button><button data-action="add-app">Add application</button></div></div>`:`<div class="section"><div class="section-title"><h2>What SnooZap is watching</h2><button class="quiet small" data-action="rules">Manage rules →</button></div>${probeRows()}</div>`}<div class="section"><div class="section-title"><span class="small">SnooZap’s OS request: <strong>${q.accepted?'Accepted':q.failed?'Failed':'Not requested'}</strong></span><button class="quiet small" data-action="details" aria-expanded="${S.details}">${S.details?'Hide':'Why this status?'}</button></div>${S.details?`<div class="inline-reasons"><p>Selected mode: <strong>${modeName()}</strong></p><p>Automatic rule: <strong>${S.monitoring?e(q.c.activity):'monitoring paused'}</strong></p><p>Wake-host hold: <strong>${S.host?'enabled':'off'}</strong></p><p>Battery limit: <strong>${q.blocked?'blocking the request':'not blocking'}</strong></p><p class="small">An accepted request is not a guarantee against OS or hardware sleep restrictions. Allow sleep releases SnooZap’s request; it does not force Sleep.</p></div>`:''}</div></section>`;}
+function rulesPage(){if(scenarios[S.scenario].empty)return `<h1>Automatic rules</h1><div class="empty"><h2>No checks configured</h2><p>Manual Stay awake is already available. Add a check only if you want automatic control.</p><div class="actions"><button data-action="add-t3">Add T3</button><button data-action="add-app">Add application</button></div></div>`;return `<div class="section-title"><h1>Automatic rules</h1><label><input type="checkbox" data-toggle="monitoring" ${S.monitoring?'checked':''}> Monitoring</label></div><p class="small">${S.monitoring?'Keep the computer awake when selected work needs it.':'Automatic checks and holds are paused. Manual and wake-host holds can continue.'}</p><div class="section"><h2>T3 activity</h2><p class="rule-description">Keep awake while local T3 has running or waiting chats.</p><div class="rule-chip">T3 IS ACTIVE</div><div class="row"><div class="grow"><strong>When the connection fails</strong><p class="small">Retain the hold if work was previously active.</p></div><button data-action="policy">Details</button></div><div class="row"><div class="grow"><strong>Before the first successful check</strong><p class="small">Wait for confirmed activity. Configurable per probe.</p></div></div></div><div class="section"><div class="section-title"><h2>Add a check</h2></div><div class="actions"><button data-action="add-t3">Add T3</button><button data-action="add-app">Add application</button></div><details id="advanced-conditions"><summary>Advanced conditions</summary><p class="small">Build ALL, ANY and NOT groups. HTTP checks use a local URL and a typed JSON condition.</p><div class="rule-chip">T3 IS ACTIVE <strong>OR</strong> (BLENDER IS RUNNING <strong>AND</strong> AC POWER)</div></details></div>`;}
+function historyPage(){const rows=S.historyCleared||scenarios[S.scenario].empty?'':`<div class="call"><span>12:24</span><span>T3 · list chat activity</span><span>42 ms</span><span>OK</span></div><div class="call"><span>12:24</span><span>Windows · system request</span><span>1 ms</span><span>${state().failed?'Error':'OK'}</span></div><div class="call"><span>12:23</span><span>T3 · list chat activity</span><span>38 ms</span><span>OK</span></div>`;return `<div class="section-title"><h1>History</h1><div><button data-action="clear-history" class="quiet small">Clear</button><button data-action="export-history" class="small">Export</button></div></div><p class="small">Latest 500 API calls and 500 events · in memory · cleared on restart</p><div class="section"><h2>API calls</h2><div class="call header"><span>Time</span><span>Operation</span><span>Duration</span><span>Result</span></div>${rows||'<p class="small">No calls to show.</p>'}<p class="small" style="margin-top:12px">Credentials, query strings and raw payloads are excluded.</p></div><div class="section"><h2>Activity and controls</h2>${S.events.length?S.events.map(x=>`<div class="row small">${e(x)}</div>`).join(''):'<p class="small">No events to show.</p>'}</div>`;}
+function settingsPage(){return `<h1>Settings</h1><form id="settings-form"><div class="section settings-group"><h2>Battery</h2><p class="small">Applies to automatic, manual and wake-host holds.</p><label class="field">Stop preventing sleep at <span><input id="floor" type="number" min="1" max="99" value="${S.floor}" required> %</span></label><label class="field">Resume at <span><input id="resume" type="number" min="2" max="100" value="${S.resume}" required> %</span></label><button type="submit">Apply battery limits</button></div></form><div class="section settings-group"><h2>Startup</h2><label class="field"><span>Start SnooZap when I sign in</span><input type="checkbox" data-toggle="autostart" ${S.autostart?'checked':''}></label><p class="small">Manual modes and timers reset to Auto when SnooZap restarts.</p></div><details class="section" id="wake-settings"><summary>Optional wake</summary><label class="field"><span>Make this computer discoverable for wake</span><input type="checkbox" data-toggle="target" ${S.target?'checked':''}></label><label class="field"><span>Host the wake page</span><input type="checkbox" data-toggle="host" ${S.host?'checked':''}></label><p class="small">Hosting adds its own awake reason so this computer remains available. Allow sleep and battery limits still override it.</p><label class="field"><span>Remote access through Tailscale</span><input type="checkbox" data-toggle="remote" ${S.remote?'checked':''}></label><p class="small">Remote setup uses an existing Tailscale account and a reviewed Serve command. It exposes wake controls only.</p></details>`;}
+function desktop(){if(S.closed)return `<div class="window closed"><span class="app-mark">ϟ</span><h2 style="margin-top:12px">SnooZap is still running</h2><p class="small">Closing the window leaves the tray controls available.</p><button class="primary" data-action="open">Open SnooZap</button></div>`;return `<div class="window"><div class="window-head"><span class="app-mark" aria-hidden="true">ϟ</span><strong>SnooZap</strong><span class="small">This computer</span><button class="quiet close" data-action="close" aria-label="Close window; keep SnooZap running">×</button></div><nav class="tabs" aria-label="SnooZap pages">${['Status','Rules','History','Settings'].map(x=>`<button data-tab="${x}" ${S.tab===x?'aria-current="page"':''}>${x}</button>`).join('')}</nav>${S.tab==='Status'?statusPage():S.tab==='Rules'?rulesPage():S.tab==='History'?historyPage():settingsPage()}<div class="footer"><span>${state().c.source} power · ${state().c.battery}% battery</span><span>Closing this window keeps SnooZap in the tray.</span></div></div>`;}
+function tray(){const q=state();return `<div class="tray-wrap"><div class="tray-title"><span class="app-mark" aria-hidden="true">ϟ</span><span>SnooZap<span class="small" style="display:block">${e(q.title)}${S.until?' · <span data-countdown>'+remaining()+'</span>':''}</span></span></div><div class="native-menu" aria-label="Tray quick controls"><button data-action="auto"><span class="check">${S.mode==='auto'?'✓':''}</span>Auto</button><button data-action="awake"><span class="check">${S.mode==='awake'&&!S.until?'✓':''}</span>Stay awake</button><button data-action="submenu" aria-expanded="${S.submenu}"><span class="check">${S.until?'✓':''}</span>Stay awake for… <span style="margin-left:auto">›</span></button>${S.submenu?'<div class="submenu"><button data-minutes="15">15 minutes</button><button data-minutes="60">1 hour</button><button data-minutes="240">4 hours</button><button data-minutes="custom">Custom…</button></div>':''}<button data-action="allow-sleep"><span class="check">${S.mode==='allow-sleep'?'✓':''}</span>Allow sleep</button><hr><button data-action="open"><span class="check"></span>Open SnooZap</button><button data-action="quit"><span class="check"></span>Quit SnooZap</button></div><div class="taskbar"><span class="small">⌃</span><button data-action="open" title="Open SnooZap; right-click for quick controls" aria-label="Open SnooZap" id="tray-icon">ϟ</button><span class="small">12:24</span></div><p class="small" style="margin-top:12px">The selected mode and the actual sleep-prevention status are shown separately.</p></div>`;}
+function terminal(){const q=state();return `<div class="terminal-wrap"><div class="terminal-title"><strong>SNOOZAP</strong><span>attached · this computer</span></div><div class="terminal-status">${e(q.symbol+' '+q.title)}</div><p data-status-reason>${e(q.reason)}</p><div class="terminal-section"><div class="terminal-row"><span>MODE</span><strong>${modeName()}${S.until?' · <span data-countdown>'+remaining()+'</span> → Auto':''}</strong></div><div class="terminal-row"><span>OS REQUEST</span><strong>${q.accepted?'ACCEPTED':q.failed?'FAILED':'NONE'}</strong></div><div class="terminal-row"><span>MONITORING</span><span>${S.monitoring?'ON':'PAUSED'}</span></div><div class="terminal-row"><span>POWER</span><span>${q.c.source} · ${q.c.battery}%</span></div></div><div class="terminal-section"><strong>PROBES</strong>${q.c.empty?'<p class="small">No checks configured. Manual controls are ready.</p>':`<div class="terminal-row"><span>T3 · local</span><span>${S.monitoring?q.c.activity:'paused'}</span></div><div class="terminal-row"><span>Blender</span><span>${S.monitoring?'inactive':'paused'}</span></div>`}</div><div class="terminal-keys"><button data-action="awake"><kbd>w</kbd> Stay awake</button><button data-minutes="custom"><kbd>t</kbd> Timed</button><button data-action="auto"><kbd>a</kbd> Auto</button><button data-action="allow-sleep"><kbd>s</kbd> Allow sleep</button><button data-action="detach"><kbd>q</kbd> Detach</button></div><p class="small" style="margin-top:16px">Detaching leaves the existing runtime and its holds running.</p></div>`;}
+function wakePage(){const text=S.wake==='packet_sent'?'Packet sent · waiting for the target.':S.wake==='target_reachable'?'Target reachable. You can now try connecting.':S.wake==='unconfirmed'?'Wake unconfirmed · no response after the timeout.':'';return `<div class="wake-wrap"><span class="small">SNOOZAP · WAKE</span><h1>Wake a computer</h1><p class="small">Reachable through authorized Tailscale access. Wake controls only.</p><div class="wake-target"><div class="row"><div class="grow"><strong>Workstation</strong><p class="small">${S.wake==='target_reachable'?'Reachable now':'Not currently reachable · last seen 35 minutes ago'}</p></div><button class="primary" data-action="wake" ${S.wake==='packet_sent'||S.wake==='target_reachable'?'disabled':''}>${S.wake==='target_reachable'?'Reachable':'Wake'}</button></div>${text?`<p class="wake-feedback" role="status">${e(text)}</p>`:''}</div><div class="wake-target"><div class="row"><div class="grow"><strong>Media PC</strong><p class="small">Remembered on another network</p></div><button disabled>Unavailable</button></div></div><p class="small">Sending a packet does not prove a computer woke. Previously discovered targets stay in the list.</p></div>`;}
+function render(){const active=document.activeElement,focus=active?.dataset?.action?'[data-action="'+active.dataset.action+'"]':active?.dataset?.toggle?'[data-toggle="'+active.dataset.toggle+'"]':active?.dataset?.tab?'[data-tab="'+active.dataset.tab+'"]':null,opened=[...$('surface').querySelectorAll('details[open]')].map(x=>x.id);$('surface').innerHTML=S.view==='tray'?tray():S.view==='tui'?terminal():S.view==='wake'?wakePage():desktop();$('view').value=S.view;$('scenario').value=S.scenario;opened.forEach(id=>{const x=document.getElementById(id);if(x)x.open=true;});$('review-actions').innerHTML=(S.until?'<span class="small">Simulate:</span> <button class="small" data-action="expire">Timer ends</button>':'')+(S.view==='wake'&&S.wake==='packet_sent'?'<span class="small">Simulate:</span> <button class="small" data-action="wake-success">Target returns</button> <button class="small" data-action="wake-timeout">Wake timeout</button>':'');if(focus){const b=$('surface').querySelector(focus);if(b)b.focus({preventScroll:true});}}
+function setMode(mode,minutes){S.mode=mode;S.until=mode==='awake'&&minutes?Date.now()+minutes*60000:null;record(mode==='awake'?(minutes?'Manual hold for '+minutes+' minutes':'Manual hold until turned off'):mode==='auto'?'Returned to Auto':'Allow sleep selected');render();const q=state();toast(q.blocked||q.failed?'Mode selected. '+q.reason:mode==='auto'?'Automatic rules are in control.':mode==='allow-sleep'?'SnooZap’s holds are released. Normal OS sleep policy applies.':S.until?'Manual hold started. It returns to Auto when the timer ends.':'Manual hold started, independently of automatic rules.');}
+function timed(value){if(value==='custom'){$('duration-dialog').showModal();$('minutes').focus();}else if(value)setMode('awake',Number(value));}
+function action(a){
+ if(['awake','auto','allow-sleep'].includes(a)){setMode(a);return;}
+ if(a==='submenu'){S.submenu=!S.submenu;render();return;}
+ if(a==='details'){S.details=!S.details;render();return;}
+ if(a==='open'){S.view='desktop';S.tab='Status';S.closed=false;render();return;}
+ if(a==='close'){S.closed=true;render();toast('Window closed. SnooZap remains in the tray.');return;}
+ if(a==='quit'){setMode('allow-sleep');toast('Quit releases SnooZap’s holds. This prototype stays open.');return;}
+ if(a==='history'||a==='rules'){S.tab=a==='history'?'History':'Rules';render();return;}
+ if(a==='reconnect'||a==='retry'){S.scenario='active';record(a==='retry'?'OS request retried':'T3 connection restored');render();toast('Example recovered. The selected mode and timer are unchanged.');return;}
+ if(a==='expire'){S.until=null;S.mode='auto';record('Manual timer expired → Auto');render();toast('Timer ended. Auto now decides whether a hold is needed.');return;}
+ if(a==='add-t3'){$('connect-dialog').showModal();return;}
+ if(a==='connect'){S.scenario='active';$('connect-dialog').close();record('Local T3 connected; automatic activity rule added');render();toast('Simulated connection complete. Your manual mode and timer were preserved.');return;}
+ if(a==='cancel-connect'){$('connect-dialog').close();return;}
+ if(a==='cancel-duration'){$('duration-dialog').close();return;}
+ if(a==='add-app'){toast('Application selection would open next. Native picker is outside this prototype.');return;}
+ if(a==='policy'){toast('Connection failure: retain an existing hold. Startup unknown: wait. Both are configurable per probe.');return;}
+ if(a==='clear-history'){S.historyCleared=true;S.events=[];render();toast('Example history cleared.');return;}
+ if(a==='export-history'){toast('Export contains sanitized history only. No file is downloaded by this prototype.');return;}
+ if(a==='detach'){S.view='desktop';render();toast('TUI detached. The existing runtime is still running.');return;}
+ if(a==='wake'){S.wake='packet_sent';render();toast('Example packet sent. Preview either outcome below the target.');return;}
+ if(a==='wake-success'||a==='wake-timeout'){S.wake=a==='wake-success'?'target_reachable':'unconfirmed';render();return;}
+}
+document.addEventListener('click',ev=>{const b=ev.target.closest('[data-action],[data-tab],[data-minutes]');if(!b||b.disabled)return;if(b.dataset.tab){S.tab=b.dataset.tab;render();}else if(b.dataset.minutes)timed(b.dataset.minutes);else action(b.dataset.action);});
+document.addEventListener('change',ev=>{const x=ev.target;if(x.id==='view'){S.view=x.value;render();toast('');}else if(x.id==='scenario'){S.scenario=x.value;if(x.value==='empty'){Object.assign(S,{mode:'auto',until:null,monitoring:true,host:false,target:false,remote:false,autostart:false,floor:20,resume:25,historyCleared:true,events:['SnooZap started · no automatic checks configured']});}render();toast(x.value==='empty'?'First-launch example reset. Manual controls need no setup.':'Example changed. Your selected mode and timer remain.');}else if(x.hasAttribute('data-duration'))timed(x.value);else if(x.dataset.toggle){S[x.dataset.toggle]=x.checked;if(x.dataset.toggle==='remote'&&x.checked)S.host=true;record(x.dataset.toggle+' '+(x.checked?'enabled':'disabled'));render();toast(x.dataset.toggle==='monitoring'&&!S.monitoring?'Monitoring paused. Manual and wake-host holds can remain.':'Example setting updated. No system setting was changed.');}});
+document.addEventListener('submit',ev=>{if(ev.target.id==='settings-form'){ev.preventDefault();const f=Number($('floor').value),r=Number($('resume').value);if(!(f>0&&f<r&&r<=100)){toast('Battery cutoff must be below the resume threshold, between 1% and 100%.');return;}S.floor=f;S.resume=r;render();toast('Example battery limits updated.');}});
+$('duration-form').addEventListener('submit',ev=>{ev.preventDefault();const n=Number($('minutes').value);if(!Number.isFinite(n)||n<=0)return;$('duration-dialog').close();setMode('awake',n);});
+document.addEventListener('keydown',ev=>{if(S.view!=='tui'||document.querySelector('dialog[open]')||['INPUT','SELECT','TEXTAREA'].includes(ev.target.tagName)||ev.ctrlKey||ev.metaKey||ev.altKey)return;const map={w:'awake',a:'auto',s:'allow-sleep',q:'detach'};if(ev.key==='t'){ev.preventDefault();timed('custom');}else if(map[ev.key]){ev.preventDefault();action(map[ev.key]);}});
+document.addEventListener('contextmenu',ev=>{if(ev.target.closest('#tray-icon')){ev.preventDefault();S.view='tray';render();}});
+setInterval(()=>{if(!S.until)return;if(Date.now()>=S.until){S.until=null;S.mode='auto';record('Manual timer expired → Auto');toast('Timer ended. Auto is now in control.');render();}else{document.querySelectorAll('[data-countdown]').forEach(x=>x.textContent=remaining());document.querySelectorAll('[data-status-reason]').forEach(x=>x.textContent=state().reason);}},1000);
+render();
+})();
+</script>
+</body>
+</html>

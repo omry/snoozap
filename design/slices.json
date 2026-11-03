@@ -1,0 +1,691 @@
+{
+  "schema_version": 2,
+  "slices": [
+    {
+      "id": "snoozap/1",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/1] Make Windows manual sleep control usable from the console",
+        "responsibility": "Deliver the first working vertical path in the empty repository: standard-user Windows foreground runtime, per-user singleton, handle-based SystemRequired backend and direct console awake/auto/allow-sleep/status/stop controls. Introduce only the shared model, Clock, platform/service interfaces and strict empty/version-1 configuration needed for this behavior. Power lifetime and requested-versus-accepted status are real, not fake scaffolding. No automatic probes, desktop, arbitrary scripts or network listener. This slice owns common composition primitives once; later slices extend them.",
+        "paths": [
+          "go.mod",
+          "cmd/snoozap/main.go",
+          "internal/model/model.go",
+          "internal/config/config.go",
+          "internal/engine/engine.go",
+          "internal/platform/windows/power.go",
+          "internal/platform/windows/owner.go",
+          "internal/cli/cli.go",
+          "tests/windows/manual_test.go",
+          "internal/config/config_test.go"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "A standard-user Windows console invocation can keep awake immediately with no setup; Auto/Allow sleep and exit release its own SystemRequired request.",
+          "Another owner cannot start even with a different data directory; display-off and normal locking work; rejected native request is visible.",
+          "The empty configuration creates no implicit rule; status/exit codes never imply protected work merely from selected mode."
+        ]
+      },
+      "display": {
+        "summary": "Usable Windows manual console control",
+        "production": [
+          650,
+          950
+        ],
+        "tests": [
+          700,
+          1100
+        ]
+      }
+    },
+    {
+      "id": "snoozap/2",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/2] Keep Windows awake for application rules and timed controls",
+        "responsibility": "Extend the working console vertical path with real current-user Windows process and power-source probes, strict finite rules/configuration, serialized scheduler, unknown contributors, per-rule retained/startup holds, battery hysteresis and timed modes. Own shared engine policy and injected-clock tests once. User can apply a generic application rule and inspect its actual resulting native hold from CLI; this is not an engine-only scaffolding slice. Add Windows battery/lifecycle/process adapters needed by that behavior, including invalid edit preservation and resume reconciliation. No T3, HTTP, desktop or remote wake yet.",
+        "paths": [
+          "internal/engine/engine.go",
+          "internal/engine/scheduler.go",
+          "internal/engine/policy.go",
+          "internal/engine/rules.go",
+          "internal/config/store.go",
+          "internal/platform/windows/battery.go",
+          "internal/platform/windows/process.go",
+          "internal/platform/windows/lifecycle.go",
+          "internal/probe/process/process.go",
+          "internal/probe/power/power.go",
+          "internal/cli/cli.go",
+          "internal/engine/engine_test.go",
+          "internal/engine/rules_test.go",
+          "tests/windows/application_test.go"
+        ],
+        "dependencies": [
+          "snoozap/1"
+        ],
+        "acceptance": [
+          "A selected local application starts/stops an automatic hold through actual native Windows power control; power-source conditions and logical combinations work.",
+          "Nested ALL/ANY/NOT and mixed retain/release_after/startup policies pass fake-clock state tests and source failure/recovery acceptance.",
+          "Manual timed actions work with no probes or monitoring disabled; battery guard, replacement/expiry, resume and stale poll cancellation follow the approved contract."
+        ]
+      },
+      "display": {
+        "summary": "Application rules, battery and timed controls",
+        "production": [
+          800,
+          1200
+        ],
+        "tests": [
+          1100,
+          1650
+        ]
+      }
+    },
+    {
+      "id": "snoozap/3",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/3] Save safe settings and explain activity and failures",
+        "responsibility": "Extend the working generic-rule console flow with complete strict config validation/atomic apply/export, bounded sanitized history/status diagnostics, Windows OS credential references and full native error/limitation reporting. Preserve prior valid state on rejected writes, distinguish battery absence from failed telemetry, and explain incomplete process access without reading other users. User can inspect why a hold is active/failed, clear/export safe history and verify credential storage denial has no plaintext fallback. Reuse power/process/policy foundations from earlier slices rather than rebuild them. No T3/HTTP login or graphical settings yet.",
+        "paths": [
+          "internal/config/config.go",
+          "internal/config/store.go",
+          "internal/history/history.go",
+          "internal/platform/windows/credentials.go",
+          "internal/platform/windows/process.go",
+          "internal/platform/windows/lifecycle.go",
+          "internal/cli/cli.go",
+          "internal/config/config_test.go",
+          "internal/history/history_test.go",
+          "internal/platform/windows/platform_test.go",
+          "tests/windows/diagnostics_test.go"
+        ],
+        "dependencies": [
+          "snoozap/2"
+        ],
+        "acceptance": [
+          "Duplicate keys, unknown fields, invalid references/thresholds and incompatible versions preserve active config; interrupted atomic writes retain a valid old or new file.",
+          "CLI safe status/history/config exports distinguish activity/desired/accepted/limitations and never expose tokens, bodies, raw header/query values or machine-local bindings.",
+          "History limits/clear work; credential-store denial has no plaintext fallback; inaccessible matching process candidates report unknown."
+        ]
+      },
+      "display": {
+        "summary": "Safe settings, credentials and diagnostics",
+        "production": [
+          650,
+          1000
+        ],
+        "tests": [
+          550,
+          900
+        ]
+      }
+    },
+    {
+      "id": "snoozap/4",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/4] Share one runtime through local IPC and CLI",
+        "responsibility": "Make the working Windows console runtime controllable by a second local CLI through current-user-only named pipes, bounded version-1 commands/snapshot subscription and all approved CLI verbs. Extract direct command handling behind Service so foreground owner and attached callers share behavior. Data-directory selection cannot bypass the singleton already owned by snoozap/1. Offline config check remains the sole owner-free command. Other commands attach and never silently start an engine. Shutdown releases holds/listeners. Native transport is an interface for later Unix ports. Wake verbs report unavailable until implemented.",
+        "paths": [
+          "cmd/snoozap/main.go",
+          "internal/ipc/protocol.go",
+          "internal/ipc/windows.go",
+          "internal/cli/cli.go",
+          "internal/ipc/protocol_test.go",
+          "internal/cli/cli_test.go"
+        ],
+        "dependencies": [
+          "snoozap/3"
+        ],
+        "acceptance": [
+          "Concurrent starts and changed --data-dir cannot create two owners; other users and remote pipe clients are denied.",
+          "Version mismatch, slow/disconnected clients, oversized frames and unknown commands do not hang or mutate the engine.",
+          "CLI exit codes, JSON schemas, mode durations, monitoring, config apply/export, history and graceful stop match HLD; status success does not imply protected work."
+        ]
+      },
+      "display": {
+        "summary": "One per-user owner and local command interface",
+        "production": [
+          650,
+          1000
+        ],
+        "tests": [
+          650,
+          1000
+        ]
+      }
+    },
+    {
+      "id": "snoozap/5",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/5] Read authorized local T3 and WSL activity",
+        "responsibility": "Implement external read-only T3 MCP login, local environment registry, OS-stored credential refs, paging and supported activity filters. Validate endpoint identity/locality from Windows for both native and already-running local WSL environments. Include child agents across all projects; no thread content needed. Add fixed WSL current-user process checks with a running-state preflight before each inspection command. Skip execution and report unknown for stopped, missing or unreadable state. Accept the owner-approved stop-after-preflight restart race; disclose it during WSL application selection/settings and never automatically terminate a distribution. No user command templates, resident WSL helper or private COM dependency. Reuse shared observation/error/history contracts. First prove SDK OAuth plus Windows/WSL identity in a disposable test; a failure invalidating the selected integration returns to HLD before dependent work.",
+        "paths": [
+          "internal/probe/t3/client.go",
+          "internal/probe/t3/oauth.go",
+          "internal/probe/t3/locality.go",
+          "internal/platform/windows/wsl.go",
+          "internal/probe/process/process.go",
+          "internal/probe/t3/client_test.go",
+          "tests/windows/t3_wsl_test.go"
+        ],
+        "dependencies": [
+          "snoozap/4"
+        ],
+        "acceptance": [
+          "A separately authorized Windows client signs in, observes local running/waiting/transitional/child work and excludes settled and remote-environment work.",
+          "Pagination cannot turn a truncated response into confirmed idle; revocation, expiry, timeout and schema failure yield sanitized unknown.",
+          "Native/WSL port collisions and multiple local environments fail safely or bind the verified intended endpoint; fixed process arguments cannot run user commands. Stopped/missing/unreadable preflight launches no inspection command and reports unknown. A controlled stop after running preflight may restart the selected distro; no automatic termination occurs and the setup/settings explanation discloses this accepted limitation."
+        ]
+      },
+      "display": {
+        "summary": "T3 OAuth and local Windows/WSL probes",
+        "production": [
+          1000,
+          1500
+        ],
+        "tests": [
+          1000,
+          1600
+        ]
+      }
+    },
+    {
+      "id": "snoozap/6",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/6] Add local HTTP and power conditions",
+        "responsibility": "Complete the built-in registry using existing process/T3 adapters, local-only typed HTTP GET and power-source conditions. Resolve and pin actual loopback addresses for each request; forbid redirects, proxy routing and URL userinfo. Fetch credential headers only from OS refs and sanitize errors before history. Implement JSON Pointer/scalar comparisons, absent-field semantics and bounded scheduling. No executable expressions/scripts or remote HTTP probes.",
+        "paths": [
+          "internal/probe/http/http.go",
+          "internal/probe/power/power.go",
+          "internal/probe/registry.go",
+          "internal/probe/http/http_test.go",
+          "internal/probe/registry_test.go"
+        ],
+        "dependencies": [
+          "snoozap/5"
+        ],
+        "acceptance": [
+          "Every HTTP operator, JSON type mismatch, exists absence, malformed JSON, timeout and 1 MiB limit follows the HLD.",
+          "IPv4/IPv6 loopback works; DNS rebinding, redirects, proxies, nonlocal destinations and unsafe credential header values are rejected.",
+          "One request per probe is in flight; source failures and power conditions combine with real T3/process observations through the same engine."
+        ]
+      },
+      "display": {
+        "summary": "Typed HTTP checks and probe scheduling",
+        "production": [
+          450,
+          700
+        ],
+        "tests": [
+          550,
+          850
+        ]
+      }
+    },
+    {
+      "id": "snoozap/7",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/7] Expose direct Windows tray and status controls",
+        "responsibility": "Create the Wails v3 tray/window and narrow Go bridge using the same owner/service operations. Implement native quick menu and selected UX status view with immediate awake, timed awake, Auto and Allow sleep. Show selected mode separately from accepted hold, reasons and platform limits; close hides, Quit stops. Reuse existing runtime if console-owned without creating another power request. Use bundled assets with no runtime Node server or external content. First launch is fully usable without a probe. Full setup/editor belongs to the next slice.",
+        "paths": [
+          "cmd/snoozap-tray/main.go",
+          "internal/desktop/app.go",
+          "internal/desktop/tray.go",
+          "frontend/status.ts",
+          "frontend/styles.css",
+          "frontend/index.html",
+          "frontend/status.test.ts",
+          "tests/windows/tray_test.go"
+        ],
+        "dependencies": [
+          "snoozap/6"
+        ],
+        "acceptance": [
+          "Native tray mouse/keyboard actions and window controls agree with CLI under empty config, active work, unknown sources, timer replacement/expiry, battery cutoff and OS failure.",
+          "Closing/reopening preserves timer/engine; Quit releases own requests; second launch focuses/attaches to existing owner.",
+          "Keyboard focus, high contrast, scaling, light/dark themes and hidden-icon behavior are checked on Windows; color alone never conveys state."
+        ]
+      },
+      "display": {
+        "summary": "Tray and status window usable without setup",
+        "production": [
+          650,
+          1000
+        ],
+        "tests": [
+          500,
+          800
+        ]
+      }
+    },
+    {
+      "id": "snoozap/8",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/8] Build simple setup, rule editing and diagnostics",
+        "responsibility": "Complete desktop setup and maintenance on existing engine adapters: Add T3 local selection and external login, Add application picker, advanced HTTP condition and ALL/ANY/NOT editor, per-probe failure/startup policy, monitoring, battery/startup settings and sanitized history clear/export. Save validated candidates atomically and preserve manual mode/timer through setup. No account wizard blocks manual use, no arbitrary scripts, and no automatic remote setup. Wake settings become available through their own later slices.",
+        "paths": [
+          "frontend/setup.ts",
+          "frontend/rules.ts",
+          "frontend/history.ts",
+          "frontend/settings.ts",
+          "internal/desktop/setup.go",
+          "frontend/setup.test.ts",
+          "frontend/rules.test.ts",
+          "tests/windows/setup_test.go"
+        ],
+        "dependencies": [
+          "snoozap/7"
+        ],
+        "acceptance": [
+          "First-run Add T3 and Add application create understandable enabled rules; cancellation/auth refusal leaves previous config and manual timer intact.",
+          "Invalid edits preserve active configuration; mixed rules and per-probe failure/startup settings show their actual effects.",
+          "Monitoring off versus Allow sleep is explicit; bounded history redacts secrets and refreshes without losing keyboard focus or resetting open dialogs."
+        ]
+      },
+      "display": {
+        "summary": "Add T3/apps, edit rules and inspect history",
+        "production": [
+          850,
+          1350
+        ],
+        "tests": [
+          700,
+          1100
+        ]
+      }
+    },
+    {
+      "id": "snoozap/9",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/9] Provide attached and foreground text operation",
+        "responsibility": "Implement Bubble Tea v2 using snapshots/commands from local service or IPC. Foreground run --tui owns runtime; tui attaches and detaches. Show status/reason/manual countdown first, probe and history details after, with w/t/a/s shortcuts and clear ownership exit copy. Add configuration editing through the same candidate validation, not a second policy engine. Keep terminal rendering and input outside core; no desktop dependency in console builds.",
+        "paths": [
+          "internal/tui/model.go",
+          "internal/tui/views.go",
+          "internal/tui/commands.go",
+          "internal/tui/model_test.go",
+          "tests/windows/tui_test.go"
+        ],
+        "dependencies": [
+          "snoozap/8"
+        ],
+        "acceptance": [
+          "Desktop/CLI/TUI snapshots agree during timed/manual/automatic holds, unknown sources and battery/OS failures.",
+          "Text-entry dialogs consume shortcut letters as text; q detaches attached TUI but releases holds when exiting its owned foreground runtime.",
+          "Resize, keyboard navigation, non-TTY/error paths and disconnect do not change policy or leak the owner."
+        ]
+      },
+      "display": {
+        "summary": "TUI with the same status and manual controls",
+        "production": [
+          600,
+          950
+        ],
+        "tests": [
+          500,
+          850
+        ]
+      }
+    },
+    {
+      "id": "snoozap/10",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/10] Discover and remember LAN targets and send WOL",
+        "responsibility": "Implement optional off-by-default target advertisement and host discovery/hold, selected physical-LAN association, bounded remembered registry, unpaired same-link wake-only listener, WOL send and matching-instance reachability checks. Persist remembered targets without evicting sleeping entries when 256 slots fill. Separate target-only from host hold. No remote local-control route, VPN broadcast, arbitrary destination or router/firmware changes. Shared network/wake code is owned here once; later ports only implement native interface selection/firewalls and acceptance.",
+        "paths": [
+          "internal/wake/discovery.go",
+          "internal/wake/targets.go",
+          "internal/wake/network.go",
+          "internal/wake/wol.go",
+          "internal/wake/lan.go",
+          "internal/wake/wake_test.go",
+          "tests/windows/lan_wake_test.go"
+        ],
+        "dependencies": [
+          "snoozap/9"
+        ],
+        "acceptance": [
+          "Awake-to-sleep targets remain remembered; wrong-network, interface replacement, full registry, malformed discovery and incompatible versions are truthful.",
+          "Unpaired selected-LAN clients can wake only a remembered same-network target; forwarded identity cannot grant local control/diagnostics.",
+          "Real supported Windows target wakes; send failure, packet sent, already reachable, reappearance and 60-second unconfirmed are distinct.",
+          "LAN browser cross-site/simple POSTs, missing/expired CSRF tokens, cross-origin token reads and forged Host fail before any packet; an unpaired native client obtains a bounded token through the existing GET and can explicitly wake."
+        ]
+      },
+      "display": {
+        "summary": "Optional LAN targets and truthful wake outcomes",
+        "production": [
+          850,
+          1300
+        ],
+        "tests": [
+          850,
+          1300
+        ]
+      }
+    },
+    {
+      "id": "snoozap/11",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/11] Host an authorized remote wake page",
+        "responsibility": "Implement the three version-1 wake-only HTTP operations and small bundled page. Keep loopback remote backend separate from LAN listener and local IPC. Require Serve user identity, same-origin/CSRF protection and bounded client/target rates. Inspect installed Serve configuration and show a conflict-safe user-run command/access guidance for dedicated HTTPS port; do not apply it. Missing identity/tagged clients deny. No remote rule, diagnostics, setting, arbitrary packet destination or general management endpoint.",
+        "paths": [
+          "internal/wake/remote.go",
+          "internal/wake/requests.go",
+          "internal/wake/serve.go",
+          "web/wake/index.html",
+          "web/wake/app.ts",
+          "web/wake/styles.css",
+          "internal/wake/remote_test.go",
+          "tests/windows/remote_wake_test.go"
+        ],
+        "dependencies": [
+          "snoozap/10"
+        ],
+        "acceptance": [
+          "Authorized tailnet browser sees remembered targets and wakes a supported target through an awake Windows host; unauthorized and identity-less callers are denied.",
+          "Port conflicts preserve existing Serve config; Funnel is not enabled; LAN forwarded headers cannot bypass remote authorization.",
+          "CSRF/origin, input size/rate, unsafe names, target IDs and POST uncertainty are checked; restart/expired request 404 never means no packet was sent."
+        ]
+      },
+      "display": {
+        "summary": "Wake-only page through existing Tailscale Serve",
+        "production": [
+          700,
+          1100
+        ],
+        "tests": [
+          750,
+          1150
+        ]
+      }
+    },
+    {
+      "id": "snoozap/12",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/12] Verify and package the complete Windows workflow",
+        "responsibility": "Build portable tray and console archives from the pinned toolchain, with optional user autostart and explicit WebView2 prerequisite checks. Verify the whole Windows project outcome including native/WSL T3, generic logic, battery/manual/timer/error recovery, UI/TUI, credentials and optional LAN/Tailscale wake. Own packaging/user instructions and integrated drivers; reuse unit/protocol tests from earlier slices. No actual publication, signing identity purchase, machine-wide service, firmware changes or early Linux helper. This is the hard prerequisite for Mac work.",
+        "paths": [
+          "build/windows/build.ps1",
+          "build/windows/package.ps1",
+          "build/windows/manifest.xml",
+          "internal/platform/windows/autostart.go",
+          "docs/windows.md",
+          "docs/wake-setup.md",
+          "tests/windows/end_to_end_test.go",
+          "tests/windows/release_test.go"
+        ],
+        "dependencies": [
+          "snoozap/11"
+        ],
+        "acceptance": [
+          "Clean standard-user Windows extraction can run manual mode immediately; console build works without WebView2; desktop missing-runtime guidance is clear.",
+          "Physical S3 and Modern Standby AC/DC checks document limits, normal locking/display-off and sleep release/crash/resume behavior.",
+          "Real local native/WSL T3 plus blocked/revoked auth and real authorized remote wake pass; full user journeys and supported matrix are recorded before Windows is called delivered."
+        ]
+      },
+      "display": {
+        "summary": "Windows portable release and integrated acceptance",
+        "production": [
+          300,
+          550
+        ],
+        "tests": [
+          700,
+          1100
+        ]
+      }
+    },
+    {
+      "id": "snoozap/13",
+      "parent": null,
+      "state": "planned",
+      "role": "design",
+      "intent": {
+        "title": "[snoozap/13] Investigate Mac closed-lid operation on real hardware",
+        "responsibility": "After Windows delivery and access to a real Mac, investigate closed-lid work on AC/battery, explicit sleep/locking, power-source changes, multiple utilities and failure/reboot recovery. Compare ordinary assertions, documented supported conditions and any optional privileged candidate without selecting a mechanism in advance. Disposable experiments and design evidence are not product implementation. Present actual supported hardware/OS conditions, privilege/installation/public behavior tradeoffs to the owner, then refresh affected HLD review and explicit approval. The owner already authorized delaying this decision, not choosing a helper. NO dependent closed-lid implementation is ready until that decision exists.",
+        "paths": [
+          "design/supporting/high-level-design/mac-investigation.md"
+        ],
+        "dependencies": [
+          "snoozap/12"
+        ],
+        "acceptance": [
+          "Real Mac evidence establishes or disproves continued no-display closed-lid work under declared AC/battery conditions.",
+          "Owner explicitly chooses an acceptable mechanism/trust/install/support contract after reviewed findings; inability to meet required outcome remains a blocker, not a reduced requirement.",
+          "Affected HLD/plan review and approval are renewed before dependent implementation; existing Windows approval/evidence is preserved."
+        ]
+      },
+      "display": {
+        "summary": "Mac hardware investigation and owner decision",
+        "production": [
+          0,
+          0
+        ],
+        "tests": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "snoozap/14",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/14] Port the shared application to native Mac facilities",
+        "responsibility": "Port existing shared engine/frontends/wake code to Mac IOKit idle assertions, power notifications, current-user processes, Keychain, restricted Unix-domain IPC, menu bar, user autostart and physical-interface discovery. Count Unix IPC shared with future Linux here once. Verify T3 local OAuth and credential handling on Mac. No closed-lid implementation is included or implied by an idle assertion. Availability starts only after Windows is delivered and the first Mac investigation has been performed.",
+        "paths": [
+          "internal/platform/darwin/power.go",
+          "internal/platform/darwin/battery.go",
+          "internal/platform/darwin/process.go",
+          "internal/platform/darwin/credentials.go",
+          "internal/ipc/unix.go",
+          "internal/platform/darwin/integration.go",
+          "internal/platform/darwin/platform_test.go",
+          "tests/darwin/native_test.go"
+        ],
+        "dependencies": [
+          "snoozap/13"
+        ],
+        "acceptance": [
+          "Native manual/automatic/T3 controls work with display-off/normal locking; process and credential failures remain truthful.",
+          "Socket ownership/mode and single owner reject another user; menu bar and TUI share status and shutdown lifetime.",
+          "LAN selection, target/host roles and existing Serve mapping inspection work without adding remote local-control authority."
+        ]
+      },
+      "display": {
+        "summary": "Mac assertions, local services and menu bar",
+        "production": [
+          700,
+          1100
+        ],
+        "tests": [
+          650,
+          1050
+        ]
+      }
+    },
+    {
+      "id": "snoozap/15",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/15] Implement the approved Mac closed-lid mechanism",
+        "responsibility": "NOT READY: mechanism, any privileged boundary, installation and recovery contract depend on the owner decision from snoozap/13. Retain the complete required closed-lid outcome. Implement only the subsequently reviewed/approved mechanism behind the shared closed-lid adapter, including battery/mode precedence, ownership, bounded lifetime, conflict detection, release and recovery. Listed paths and line envelopes are conditional scope reservations, not permission for a privileged helper or installer. Replace affected path/engineering details through reviewed replan after the decision. Do not substitute external-display-only clamshell or label ordinary idle protection as completion.",
+        "paths": [
+          "internal/platform/darwin/closedlid.go",
+          "internal/platform/darwin/closedlid_test.go",
+          "build/darwin/closedlid-install.sh",
+          "tests/darwin/closedlid_test.go"
+        ],
+        "dependencies": [
+          "snoozap/13",
+          "snoozap/14"
+        ],
+        "acceptance": [
+          "Required supported Mac work continues with lid closed on AC/battery without defeating battery cutoff or locking.",
+          "Approved privilege denial, helper/process failure, crashes, reboot, source changes and competing utilities recover as specified without overwriting another owner.",
+          "Exact current mechanism/install behavior has renewed owner approval and physical evidence; unresolved feasibility blocks completion."
+        ]
+      },
+      "display": {
+        "summary": "Conditional Mac closed-lid implementation",
+        "production": [
+          800,
+          1600
+        ],
+        "tests": [
+          900,
+          1800
+        ]
+      }
+    },
+    {
+      "id": "snoozap/16",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/16] Package and verify the complete Mac workflow",
+        "responsibility": "Package the app bundle and headless CLI and verify full shared workflows on declared supported Macs, including the accepted closed-lid mechanism, Keychain, native menu bar, optional autostart, WOL target/host prerequisites and Tailscale access. Document distribution/signing/notarization conditions without performing publication. NOT READY while snoozap/13 or snoozap/15 is unresolved. A partial Mac idle-only build does not complete this slice and does not unlock Linux delivery.",
+        "paths": [
+          "build/darwin/package.sh",
+          "build/darwin/Info.plist",
+          "docs/macos.md",
+          "tests/darwin/end_to_end_test.go",
+          "tests/darwin/release_test.go"
+        ],
+        "dependencies": [
+          "snoozap/15"
+        ],
+        "acceptance": [
+          "Fresh Mac setup and upgrade retain safe config/credential behavior; manual mode works without T3 setup.",
+          "Complete closed-lid AC/battery, failure/recovery and UI/TUI journeys pass on recorded hardware/OS; unsupported wake states are explicit.",
+          "Mac platform is delivered only after required outcome and optional-wake support matrix are verified."
+        ]
+      },
+      "display": {
+        "summary": "Mac app/CLI and physical platform acceptance",
+        "production": [
+          250,
+          500
+        ],
+        "tests": [
+          600,
+          1000
+        ]
+      }
+    },
+    {
+      "id": "snoozap/17",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/17] Port native system integration to Linux",
+        "responsibility": "After complete Mac delivery, implement logind idle inhibition with descriptor lifetime, power/resume/UPower observations, current-user procfs selection, Secret Service credential refs, reuse Unix IPC and port desktop tray/autostart/physical-interface discovery. Verify the narrow idle inhibitor against actual supported desktop power policy while retaining explicit user Suspend behavior. Handle missing Secret Service, logind permissions or tray provider truthfully. No system service, global policy rewrite, password fallback or earlier Linux host exception.",
+        "paths": [
+          "internal/platform/linux/power.go",
+          "internal/platform/linux/battery.go",
+          "internal/platform/linux/process.go",
+          "internal/platform/linux/credentials.go",
+          "internal/platform/linux/integration.go",
+          "internal/platform/linux/platform_test.go",
+          "tests/linux/native_test.go"
+        ],
+        "dependencies": [
+          "snoozap/16"
+        ],
+        "acceptance": [
+          "Real supported desktop prevents idle suspend while allowing display-off/lock; explicit Suspend and resume remain truthful.",
+          "Missing/denied native facilities produce clear limitations; no plaintext secret fallback; other-user IPC/processes are excluded.",
+          "T3 OAuth, manual/rule controls, shared TUI and LAN/Tailscale wake work through Linux adapters without duplicated engine/wake implementations."
+        ]
+      },
+      "display": {
+        "summary": "Linux inhibitors, credentials and desktop integration",
+        "production": [
+          700,
+          1150
+        ],
+        "tests": [
+          650,
+          1050
+        ]
+      }
+    },
+    {
+      "id": "snoozap/18",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/18] Package Linux and verify cross-platform wake journeys",
+        "responsibility": "Package Linux desktop and headless outputs with declared webview/tray/session dependencies. Verify Linux full workflows and cross-platform remembered-target/remote-wake compatibility against already accepted Windows and Mac versions. Include the media-PC host case only now. Count new integrated Linux/cross-platform drivers and user guidance, not shared implementation/tests again. No claims for untested NIC/firmware/OS sleep combinations and no router firmware changes.",
+        "paths": [
+          "build/linux/package.sh",
+          "build/linux/snoozap.desktop",
+          "docs/linux.md",
+          "docs/support-matrix.md",
+          "tests/linux/end_to_end_test.go",
+          "tests/crossplatform/wake_test.go"
+        ],
+        "dependencies": [
+          "snoozap/17"
+        ],
+        "acceptance": [
+          "Clean supported Linux environment runs the documented desktop/headless entry points; no GUI library is needed by console-only output.",
+          "Linux T3, generic/HTTP/power rules, timers/battery/failure/credential/UI/TUI and authorized remote-wake journeys pass.",
+          "Cross-platform discovery/remembered IDs, wrong-network isolation and truthful wake results pass; support matrix records full three-platform acceptance without treating UDP send as proof."
+        ]
+      },
+      "display": {
+        "summary": "Linux release and full-project acceptance",
+        "production": [
+          250,
+          500
+        ],
+        "tests": [
+          650,
+          1100
+        ]
+      }
+    }
+  ]
+}
