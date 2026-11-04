@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/omry/snoozap/internal/config"
 	"github.com/omry/snoozap/internal/model"
@@ -18,7 +19,7 @@ import (
 
 type Factory func(context.Context, string) (model.Service, error)
 
-const usage = "Usage: snoozap run [--data-dir path] | config check <path>\nConsole commands: mode auto|awake|allow-sleep [--for duration], monitor on|off, config check|apply <path>, status [--json], stop\n"
+const usage = "Usage: snoozap run [--data-dir path] | config check <path>\nConsole commands: mode auto|awake|allow-sleep [--for duration], monitor on|off, config check|apply|export <path>, history [--json]|clear|export <path>, status [--json], stop\n"
 
 func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer, start Factory) int {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "help") {
@@ -69,7 +70,7 @@ type input struct {
 }
 
 func console(ctx context.Context, service model.Service, in io.Reader, out, stderr io.Writer) int {
-	if _, err := fmt.Fprintln(out, "SnooZap manual console. Enter mode awake [--for 15m], mode auto, mode allow-sleep, monitor on|off, config check|apply <path>, status --json, or stop."); err != nil {
+	if _, err := fmt.Fprintln(out, "SnooZap manual console. Enter mode awake [--for 15m], mode auto, mode allow-sleep, monitor on|off, config check|apply|export <path>, history [--json]|clear|export <path>, status --json, or stop."); err != nil {
 		return 1
 	}
 	initial, err := service.Snapshot(ctx)
@@ -118,6 +119,66 @@ func console(ctx context.Context, service model.Service, in io.Reader, out, stde
 			if len(args) == 1 && args[0] == "stop" {
 				return exitCode
 			}
+			if args[0] == "history" {
+				if len(args) == 2 && args[1] == "clear" {
+					if err := service.ClearHistory(ctx); err != nil {
+						fmt.Fprintln(stderr, "Cannot clear history")
+						exitCode = 1
+					} else {
+						fmt.Fprintln(out, "History cleared")
+					}
+					continue
+				}
+				listing := len(args) == 1 || len(args) == 2 && args[1] == "--json"
+				export := len(args) >= 3 && args[1] == "export"
+				if !listing && !export {
+					fmt.Fprint(stderr, usage)
+					exitCode = 2
+					continue
+				}
+				h, err := service.History(ctx)
+				if err != nil {
+					fmt.Fprintln(stderr, "Cannot read history")
+					exitCode = 1
+					continue
+				}
+				if export {
+					data, err := json.MarshalIndent(h, "", "  ")
+					if err == nil {
+						err = writeExport(consolePath(line.line, "history export "), append(data, '\n'))
+					}
+					if err != nil {
+						fmt.Fprintln(stderr, "Cannot export history; destination must be a new writable file")
+						exitCode = 1
+					} else {
+						fmt.Fprintln(out, "History exported")
+					}
+				} else if len(args) == 2 {
+					if err := json.NewEncoder(out).Encode(h); err != nil {
+						return 1
+					}
+				} else {
+					for _, r := range h.Records {
+						if _, err := fmt.Fprintf(out, "%s %s %s probe=%s duration_ms=%d\n", r.Time.Format(time.RFC3339), r.Operation, r.Result, r.ProbeID, r.DurationMS); err != nil {
+							return 1
+						}
+					}
+				}
+				continue
+			}
+			if args[0] == "config" && len(args) >= 3 && args[1] == "export" {
+				data, err := service.ExportConfig(ctx)
+				if err == nil {
+					err = writeExport(consolePath(line.line, "config export "), data)
+				}
+				if err != nil {
+					fmt.Fprintln(stderr, "Cannot export configuration; destination must be a new writable file")
+					exitCode = 1
+				} else {
+					fmt.Fprintln(out, "Configuration exported")
+				}
+				continue
+			}
 			cmd := model.Command{Operation: args[0]}
 			jsonOutput := false
 			switch {
@@ -136,11 +197,7 @@ func console(ctx context.Context, service model.Service, in io.Reader, out, stde
 				cmd.Operation = "monitor"
 				cmd.Monitoring = args[1] == "on"
 			case args[0] == "config" && len(args) >= 3 && (args[1] == "check" || args[1] == "apply"):
-				prefix := "config " + args[1] + " "
-				path := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line.line), prefix))
-				if len(path) >= 2 && path[0] == '"' && path[len(path)-1] == '"' {
-					path = path[1 : len(path)-1]
-				}
+				path := consolePath(line.line, "config "+args[1]+" ")
 				f, err := os.Open(path)
 				if err != nil {
 					fmt.Fprintln(stderr, "Cannot read configuration")
@@ -189,4 +246,45 @@ func console(ctx context.Context, service model.Service, in io.Reader, out, stde
 			}
 		}
 	}
+}
+
+func consolePath(line, prefix string) string {
+	path := strings.TrimSpace(line)
+	for range strings.Fields(prefix) {
+		i := strings.IndexFunc(path, unicode.IsSpace)
+		if i < 0 {
+			return ""
+		}
+		path = strings.TrimSpace(path[i:])
+	}
+	if len(path) >= 2 && path[0] == '"' && path[len(path)-1] == '"' {
+		path = path[1 : len(path)-1]
+	}
+	return path
+}
+
+// Exports never replace another file or follow an existing destination symlink.
+func writeExport(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return errors.New("export destination unavailable")
+	}
+	complete := false
+	defer func() {
+		f.Close()
+		if !complete {
+			_ = os.Remove(path)
+		}
+	}()
+	if n, err := f.Write(data); err != nil || n != len(data) {
+		return errors.New("cannot write export")
+	}
+	if err := f.Sync(); err != nil {
+		return errors.New("cannot flush export")
+	}
+	if err := f.Close(); err != nil {
+		return errors.New("cannot close export")
+	}
+	complete = true
+	return nil
 }

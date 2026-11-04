@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/omry/snoozap/internal/config"
+	"github.com/omry/snoozap/internal/history"
 	"github.com/omry/snoozap/internal/model"
 )
 
@@ -20,8 +21,10 @@ type Options struct {
 	Events        <-chan model.LifecycleEvent
 }
 type response struct {
-	snapshot model.Snapshot
-	err      error
+	snapshot      model.Snapshot
+	history       history.Snapshot
+	configuration config.Config
+	err           error
 }
 type request struct {
 	ctx   context.Context
@@ -34,6 +37,7 @@ type Engine struct {
 	closeErr error
 }
 type loop struct {
+	history                   history.Store
 	ctx                       context.Context
 	options                   Options
 	power                     model.PowerBackend
@@ -84,28 +88,46 @@ func (e *Engine) Snapshot(ctx context.Context) (model.Snapshot, error) {
 	return e.Execute(ctx, model.Command{Operation: "status"})
 }
 func (e *Engine) Execute(ctx context.Context, cmd model.Command) (model.Snapshot, error) {
+	r := e.call(ctx, cmd)
+	return r.snapshot, r.err
+}
+func (e *Engine) History(ctx context.Context) (history.Snapshot, error) {
+	r := e.call(ctx, model.Command{Operation: "history"})
+	return r.history, r.err
+}
+func (e *Engine) ClearHistory(ctx context.Context) error {
+	return e.call(ctx, model.Command{Operation: "history-clear"}).err
+}
+func (e *Engine) ExportConfig(ctx context.Context) ([]byte, error) {
+	r := e.call(ctx, model.Command{Operation: "config-export"})
+	if r.err != nil {
+		return nil, r.err
+	}
+	return config.Export(r.configuration)
+}
+func (e *Engine) call(ctx context.Context, cmd model.Command) response {
 	r := request{ctx: ctx, cmd: cmd, reply: make(chan response, 1)}
 	if err := ctx.Err(); err != nil {
-		return model.Snapshot{}, err
+		return response{err: err}
 	}
 	select {
 	case <-ctx.Done():
-		return model.Snapshot{}, ctx.Err()
+		return response{err: ctx.Err()}
 	case <-e.done:
-		return model.Snapshot{}, model.ErrStopped
+		return response{err: model.ErrStopped}
 	case e.requests <- r:
 	}
 	select {
 	case v := <-r.reply:
-		return v.snapshot, v.err
+		return v
 	case <-ctx.Done():
-		return model.Snapshot{}, ctx.Err()
+		return response{err: ctx.Err()}
 	case <-e.done:
 		select {
 		case v := <-r.reply:
-			return v.snapshot, v.err
+			return v
 		default:
-			return model.Snapshot{}, model.ErrStopped
+			return response{err: model.ErrStopped}
 		}
 	}
 }
@@ -145,6 +167,33 @@ func copyInt(p *int) *int {
 	return &v
 }
 func (l *loop) publish(previous model.Snapshot) {
+	if previous.Activity != l.snapshot.Activity {
+		l.record("state", string(l.snapshot.Activity))
+	}
+	if previous.DesiredHold != l.snapshot.DesiredHold {
+		result := "released"
+		if l.snapshot.DesiredHold {
+			result = "requested"
+		}
+		l.record("hold", result)
+	}
+	if previous.NativeRequestActive != l.snapshot.NativeRequestActive || previous.NativeRequestAccepted != l.snapshot.NativeRequestAccepted || previous.NativeError != l.snapshot.NativeError {
+		result := "released"
+		if l.snapshot.NativeRequestAccepted {
+			result = "accepted"
+		}
+		if l.snapshot.NativeError != "" {
+			result = "rejected"
+		}
+		l.record("native", result)
+	}
+	if previous.Battery.Blocked != l.snapshot.Battery.Blocked {
+		result := "ok"
+		if l.snapshot.Battery.Blocked {
+			result = "blocked"
+		}
+		l.record("battery", result)
+	}
 	l.snapshot.Probes = []model.ProbeStatus{}
 	ids := make([]string, 0, len(l.probes))
 	for id := range l.probes {
@@ -159,6 +208,34 @@ func (l *loop) publish(previous model.Snapshot) {
 		l.snapshot.Sequence++
 		l.snapshot.UpdatedAt = l.clock.Now()
 	}
+}
+
+func (l *loop) record(operation, result string) {
+	l.history.Add(history.Record{Time: l.clock.Now(), Operation: operation, Result: result})
+}
+
+func (l *loop) recordControl(cmd model.Command, err error) {
+	result := "ok"
+	if err != nil {
+		result = "rejected"
+	}
+	switch cmd.Operation {
+	case "mode":
+		if err == nil {
+			result = string(cmd.Mode)
+		}
+	case "monitor":
+		if err == nil {
+			result = "off"
+			if cmd.Monitoring {
+				result = "on"
+			}
+		}
+	case "config":
+	default:
+		return
+	}
+	l.record(cmd.Operation, result)
 }
 func (l *loop) activate(candidate config.Config, now time.Duration) {
 	candidate = config.Clone(candidate)
@@ -302,12 +379,13 @@ func (e *Engine) run(ctx context.Context, power model.PowerBackend, clock model.
 	defer cancel()
 	l := &loop{ctx: ownerCtx, power: power, clock: clock, options: options, cfg: config.Empty(), probes: map[string]*probeState{}, jobs: map[string]*poll{}, results: make(chan result, 8), holds: map[string]bool{}, startup: map[string]bool{}}
 	l.snapshot = model.Snapshot{SchemaVersion: 1, Sequence: 1, Mode: model.Auto, Monitoring: true, UpdatedAt: clock.Now(), ConfigurationError: configError, Activity: model.Unknown, Limitations: []string{"An accepted request does not guarantee protection from explicit Sleep or lid close.", "Windows Modern Standby and battery policies can limit SystemRequired requests.", "SnooZap does not request that the display stay on."}}
+	previous := l.view()
 	now := clock.Elapsed()
 	l.activate(options.Configuration, now)
 	l.readBattery()
 	l.poll(now)
 	_ = l.reconcile(now)
-	l.publish(l.view())
+	l.publish(previous)
 	timer := clock.NewTimer(100 * time.Millisecond)
 	defer func() { timer.Stop() }()
 	suspendClock, hasSuspendClock := clock.(model.SuspendClock)
@@ -333,12 +411,25 @@ func (e *Engine) run(ctx context.Context, power model.PowerBackend, clock model.
 			}
 			if r.cmd.Operation == "stop" {
 				e.closeErr = l.cleanup()
-				r.reply <- response{l.view(), e.closeErr}
+				r.reply <- response{snapshot: l.view(), err: e.closeErr}
 				return
 			}
+			switch r.cmd.Operation {
+			case "history":
+				r.reply <- response{snapshot: l.view(), history: l.history.Snapshot()}
+				continue
+			case "history-clear":
+				l.history.Clear()
+				r.reply <- response{snapshot: l.view()}
+				continue
+			case "config-export":
+				r.reply <- response{snapshot: l.view(), configuration: config.Clone(l.cfg)}
+				continue
+			}
 			err := l.execute(r.cmd, clock.Elapsed())
+			l.recordControl(r.cmd, err)
 			l.publish(previous)
-			r.reply <- response{l.view(), err}
+			r.reply <- response{snapshot: l.view(), err: err}
 		case result := <-l.results:
 			now = clock.Elapsed()
 			l.receive(result, now)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/omry/snoozap/internal/config"
+	"github.com/omry/snoozap/internal/history"
 	"github.com/omry/snoozap/internal/model"
 )
 
@@ -41,6 +42,7 @@ type probeState struct {
 	failureSince, next             time.Duration
 }
 type poll struct {
+	started           time.Duration
 	id                string
 	generation, epoch uint64
 	deadline          time.Duration
@@ -80,6 +82,7 @@ func (l *loop) poll(now time.Duration) {
 			job.cancel()
 			if p := l.probes[job.id]; p != nil && job.generation == l.generation && job.epoch == l.epoch {
 				l.unknown(p, "timeout", now, true)
+				l.recordPoll(job, "timeout", now, 0)
 			}
 		}
 		if job.expired && now >= job.abandonAt {
@@ -116,10 +119,11 @@ func (l *loop) poll(now time.Duration) {
 		}
 		if adapter == nil {
 			l.unknown(p, "unavailable", now, true)
+			l.history.Add(history.Record{Time: l.clock.Now(), ProbeID: id, Operation: "probe", Result: "unavailable"})
 			continue
 		}
 		ctx, cancel := context.WithTimeout(l.ctx, time.Duration(p.spec.TimeoutMS)*time.Millisecond)
-		job := &poll{id: id, generation: l.generation, epoch: l.epoch, deadline: dueAfter(now, time.Duration(p.spec.TimeoutMS)*time.Millisecond), cancel: cancel}
+		job := &poll{id: id, generation: l.generation, epoch: l.epoch, started: now, deadline: dueAfter(now, time.Duration(p.spec.TimeoutMS)*time.Millisecond), cancel: cancel}
 		l.jobs[id] = job
 		go func() {
 			observation := model.Observation{State: model.Unknown, ErrorCode: "adapter_failure"}
@@ -153,6 +157,7 @@ func (l *loop) receive(r result, now time.Duration) {
 	}
 	if r.completed >= r.job.deadline {
 		l.unknown(p, "timeout", now, true)
+		l.recordPoll(r.job, "timeout", r.completed, 0)
 		p.wedged = r.completed >= dueAfter(r.job.deadline, cancellationGrace)
 		return
 	}
@@ -166,6 +171,7 @@ func (l *loop) receive(r result, now time.Duration) {
 			code = "unavailable"
 		}
 		l.unknown(p, code, now, true)
+		l.recordPoll(r.job, code, r.completed, r.observation.StatusCode)
 		return
 	}
 	p.state = r.observation.State
@@ -173,6 +179,11 @@ func (l *loop) receive(r result, now time.Duration) {
 	p.failing = false
 	p.everSucceeded = true
 	p.success = &at
+	l.recordPoll(r.job, string(p.state), r.completed, r.observation.StatusCode)
+}
+
+func (l *loop) recordPoll(job *poll, result string, completed time.Duration, status int) {
+	l.history.Add(history.Record{Time: l.clock.Now(), ProbeID: job.id, Operation: "probe", DurationMS: (completed - job.started).Milliseconds(), Result: result, StatusCode: status})
 }
 func (l *loop) invalidate(now time.Duration, reset bool) {
 	l.epoch++
