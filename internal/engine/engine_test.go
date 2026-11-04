@@ -1213,3 +1213,146 @@ func TestSnapshotNestedValuesCannotMutateOwner(t *testing.T) {
 		t.Fatal("caller modified engine state through snapshot")
 	}
 }
+
+func TestSubscriptionsAreCopiedLatestOnlyAndNeverBlockOwner(t *testing.T) {
+	r := newRig(t, config.Empty(), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a, err := r.engine.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := r.engine.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := <-a
+	other := <-b
+	first.Limitations[0] = "caller edit"
+	if other.Limitations[0] == "caller edit" || r.status(t).Limitations[0] == "caller edit" {
+		t.Fatal("subscribers share owner storage")
+	}
+	for i := 0; i < 100; i++ {
+		mode := model.Awake
+		if i%2 == 0 {
+			mode = model.AllowSleep
+		}
+		r.command(t, model.Command{Operation: "mode", Mode: mode})
+	}
+	latest := r.status(t)
+	for _, updates := range []<-chan model.Snapshot{a, b} {
+		select {
+		case s := <-updates:
+			if s.Mode != latest.Mode || s.Sequence != latest.Sequence {
+				t.Fatal("slow view did not receive latest snapshot", s.Sequence, latest.Sequence)
+			}
+		default:
+			t.Fatal("missing latest snapshot")
+		}
+		if len(updates) != 0 {
+			t.Fatal("unbounded stale update queue")
+		}
+	}
+	cancel()
+	// Subscription registration prunes cancelled views without a timer tick.
+	for range 70 {
+		ctx, cancel := context.WithCancel(context.Background())
+		updates, err := r.engine.Subscribe(ctx)
+		if err != nil {
+			t.Fatal("cancelled views retained capacity", err)
+		}
+		<-updates
+		cancel()
+	}
+	if err := r.engine.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, updates := range []<-chan model.Snapshot{a, b} {
+		if _, ok := <-updates; ok {
+			t.Fatal("closed owner retained a subscription")
+		}
+	}
+	if _, err := r.engine.Subscribe(context.Background()); !errors.Is(err, model.ErrStopped) {
+		t.Fatal(err)
+	}
+}
+
+func TestSubscriptionPublishesAutonomousTimerAndBatteryChanges(t *testing.T) {
+	r := newRig(t, config.Empty(), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	updates, err := r.engine.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-updates
+	r.command(t, model.Command{Operation: "mode", Mode: model.Awake, Duration: time.Second})
+	<-updates
+	r.clock.advance(2 * time.Second)
+	select {
+	case s := <-updates:
+		if s.Mode != model.Auto || s.Hold.Requested {
+			t.Fatal("timer expiry was not published", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("autonomous timer update missing")
+	}
+	r.batteryAt("battery", 10, true, true)
+	r.events <- model.PowerChanged
+	select {
+	case s := <-updates:
+		if !s.Battery.Blocked {
+			t.Fatal("native power event not published", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("autonomous battery update missing")
+	}
+}
+
+func TestSubscriptionCapacityAndIndependentCancellation(t *testing.T) {
+	r := newRig(t, config.Empty(), nil)
+	contexts := make([]context.CancelFunc, 64)
+	var streams []<-chan model.Snapshot
+	for i := range contexts {
+		ctx, cancel := context.WithCancel(context.Background())
+		contexts[i] = cancel
+		t.Cleanup(cancel)
+		ch, err := r.engine.Subscribe(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		streams = append(streams, ch)
+		<-ch
+	}
+	if _, err := r.engine.Subscribe(context.Background()); err == nil {
+		t.Fatal("unbounded subscriptions")
+	}
+	contexts[0]()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := r.engine.Subscribe(ctx); err != nil {
+		t.Fatal("cancelled capacity not returned")
+	}
+	if _, ok := <-streams[0]; ok {
+		t.Fatal("cancelled subscriber not closed")
+	}
+	r.command(t, model.Command{Operation: "mode", Mode: model.Awake})
+	if s := <-streams[1]; s.Mode != model.Awake {
+		t.Fatal("one cancellation affected another subscriber")
+	}
+}
+
+func TestStatusObservationSucceedsWhenNativeRetryIsRejected(t *testing.T) {
+	r := newRig(t, config.Empty(), nil)
+	r.backend.mu.Lock()
+	r.backend.fail = 100
+	r.backend.mu.Unlock()
+	if _, err := r.engine.Execute(context.Background(), model.Command{Operation: "mode", Mode: model.Awake}); err == nil {
+		t.Fatal("native rejection not returned for mutation")
+	}
+	r.clock.advance(time.Second)
+	s, err := r.engine.Snapshot(context.Background())
+	if err != nil || !s.Hold.Requested || s.Hold.OSAccepted || s.NativeError == "" {
+		t.Fatal("observation claimed success of native protection or failed to report it", s, err)
+	}
+}
