@@ -149,7 +149,10 @@
           "internal/ipc/windows.go",
           "internal/cli/cli.go",
           "internal/ipc/protocol_test.go",
-          "internal/cli/cli_test.go"
+          "internal/cli/cli_test.go",
+          "internal/engine/engine.go",
+          "internal/engine/engine_test.go",
+          "internal/model/model.go"
         ],
         "dependencies": [
           "snoozap/3"
