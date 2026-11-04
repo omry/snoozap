@@ -17,6 +17,7 @@ import (
 	"github.com/omry/snoozap/internal/cli"
 	"github.com/omry/snoozap/internal/config"
 	"github.com/omry/snoozap/internal/engine"
+	"github.com/omry/snoozap/internal/history"
 	"github.com/omry/snoozap/internal/model"
 )
 
@@ -30,6 +31,183 @@ func TestEmptyConfigurationNeverCreatesWork(t *testing.T) {
 	cfg := config.Empty()
 	if cfg.SchemaVersion != 1 || cfg.Probes == nil || cfg.Rules == nil {
 		t.Fatal("empty configuration must carry explicit version and empty collections")
+	}
+}
+
+func TestPortableExportUsesOnlyValidatedConfiguration(t *testing.T) {
+	c := config.Empty()
+	data, err := config.Export(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundtrip, err := config.Parse(bytes.NewReader(data))
+	if err != nil || !roundtrip.Settings.Monitoring || len(roundtrip.Probes) != 0 {
+		t.Fatal("export did not roundtrip", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || len(fields) != 4 {
+		t.Fatal("unexpected portable fields", err)
+	}
+	for _, k := range []string{"schema_version", "probes", "rules", "settings"} {
+		if _, ok := fields[k]; !ok {
+			t.Fatal("missing portable field", k)
+		}
+	}
+	c.SchemaVersion = 99
+	if data, err := config.Export(c); err == nil || data != nil {
+		t.Fatal("invalid config exported")
+	}
+}
+
+func TestConsoleHistoryAndSafeExports(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "saved config.json")
+	historyPath := filepath.Join(dir, "history.json")
+	p := &fakePower{}
+	var out, stderr bytes.Buffer
+	input := "mode awake\nhistory --json\nhistory\nconfig\t export \"" + cfgPath + "\"\nhistory export " + historyPath + "\nhistory clear\nhistory --json\nstatus --json\nstop\n"
+	starts := 0
+	code := cli.Run(context.Background(), []string{"run"}, strings.NewReader(input), &out, &stderr, func(ctx context.Context, _ string) (model.Service, error) {
+		starts++
+		return engine.New(ctx, p, nil, "", manualOptions()), nil
+	})
+	if code != 0 || stderr.Len() != 0 || starts != 1 {
+		t.Fatalf("console exit%d: %s", code, stderr.String())
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Parse(bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(historyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h history.Snapshot
+	if err := json.Unmarshal(data, &h); err != nil || h.SchemaVersion != 1 || len(h.Records) == 0 {
+		t.Fatal("history export", err)
+	}
+	jsonLines := 0
+	for _, line := range strings.Split(out.String(), "\n") {
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		jsonLines++
+		if jsonLines == 2 {
+			if line != `{"schema_version":1,"records":[]}` {
+				t.Fatal("clear did not empty history", line)
+			}
+		}
+	}
+	if jsonLines != 3 {
+		t.Fatal("missing status/history JSON", out.String())
+	}
+	_, active, closed := p.state()
+	if active || closed != 1 {
+		t.Fatal("diagnostic operations leaked owner")
+	}
+}
+
+func TestConsoleExportsPreserveExistingFilesAndRejectBadCommands(t *testing.T) {
+	for _, command := range []string{"config export", "history export"} {
+		t.Run(command, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "existing.json")
+			if err := os.WriteFile(path, []byte("keep-this-file"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var out, stderr bytes.Buffer
+			code := cli.Run(context.Background(), []string{"run"}, strings.NewReader(command+" "+path+"\nstop\n"), &out, &stderr, func(ctx context.Context, _ string) (model.Service, error) {
+				return engine.New(ctx, &fakePower{}, nil, "", manualOptions()), nil
+			})
+			data, err := os.ReadFile(path)
+			if code != 1 || err != nil || string(data) != "keep-this-file" || !strings.Contains(stderr.String(), "new writable file") {
+				t.Fatal("export overwrote file", code, err)
+			}
+		})
+	}
+	for _, command := range []string{"history bad", "history --json unexpected", "history clear extra", "config export"} {
+		var out, stderr bytes.Buffer
+		code := cli.Run(context.Background(), []string{"run"}, strings.NewReader(command+"\nstop\n"), &out, &stderr, func(ctx context.Context, _ string) (model.Service, error) {
+			return engine.New(ctx, &fakePower{}, nil, "", manualOptions()), nil
+		})
+		if code != 2 {
+			t.Fatal("invalid diagnostic command accepted", command, code)
+		}
+	}
+}
+
+type diagnosticFailure struct{ model.Service }
+
+func (diagnosticFailure) History(context.Context) (history.Snapshot, error) {
+	return history.Snapshot{}, errors.New("private-token-error")
+}
+func (diagnosticFailure) ClearHistory(context.Context) error {
+	return errors.New("private-token-error")
+}
+func (diagnosticFailure) ExportConfig(context.Context) ([]byte, error) {
+	return nil, errors.New("private-token-error")
+}
+
+func TestDiagnosticErrorsNeverEchoPrivateServiceErrors(t *testing.T) {
+	for _, cmd := range []string{"history", "history clear", "history export ignored.json", "config export ignored.json"} {
+		var out, stderr bytes.Buffer
+		p := &fakePower{}
+		code := cli.Run(context.Background(), []string{"run"}, strings.NewReader(cmd+"\nstop\n"), &out, &stderr, func(ctx context.Context, _ string) (model.Service, error) {
+			return diagnosticFailure{engine.New(ctx, p, nil, "", manualOptions())}, nil
+		})
+		if code != 1 || strings.Contains(out.String()+stderr.String(), "private-token") {
+			t.Fatal("unsafe diagnostic failure", cmd, code)
+		}
+		_, _, closed := p.state()
+		if closed != 1 {
+			t.Fatal("failed diagnostics leaked service")
+		}
+	}
+}
+
+type diagnosticBrokenWriter struct{}
+
+func (diagnosticBrokenWriter) Write(p []byte) (int, error) {
+	if bytes.HasPrefix(p, []byte("{")) || bytes.HasPrefix(p, []byte("1970-")) {
+		return 0, io.ErrClosedPipe
+	}
+	return len(p), nil
+}
+
+func TestDiagnosticOutputFailureClosesHeldRuntime(t *testing.T) {
+	for _, cmd := range []string{"history", "history --json"} {
+		p := &fakePower{}
+		code := cli.Run(context.Background(), []string{"run"}, strings.NewReader("mode awake\n"+cmd+"\n"), diagnosticBrokenWriter{}, io.Discard, func(ctx context.Context, _ string) (model.Service, error) {
+			return engine.New(ctx, p, fixedClock{time.Unix(123, 0)}, "", manualOptions()), nil
+		})
+		_, active, closed := p.state()
+		if code != 1 || active || closed != 1 {
+			t.Fatal("output failure leaked hold", cmd, code, closed)
+		}
+	}
+}
+
+func TestExportsDoNotFollowDestinationSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "preserve.txt")
+	if err := os.WriteFile(target, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "export.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip("host cannot create symlink fixture:", err)
+	}
+	for _, verb := range []string{"config export", "history export"} {
+		var out, stderr bytes.Buffer
+		code := cli.Run(context.Background(), []string{"run"}, strings.NewReader(verb+" "+link+"\nstop\n"), &out, &stderr, func(ctx context.Context, _ string) (model.Service, error) {
+			return engine.New(ctx, &fakePower{}, nil, "", manualOptions()), nil
+		})
+		data, err := os.ReadFile(target)
+		if code != 1 || err != nil || string(data) != "original" {
+			t.Fatal("export followed existing link", code, err)
+		}
 	}
 }
 

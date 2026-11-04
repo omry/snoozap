@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/omry/snoozap/internal/config"
+	"github.com/omry/snoozap/internal/history"
 )
 
 type Mode string
@@ -50,8 +51,9 @@ const (
 )
 
 type Observation struct {
-	State     State
-	ErrorCode string
+	State      State
+	ErrorCode  string
+	StatusCode int
 }
 type Probe interface {
 	Check(context.Context) Observation
@@ -128,5 +130,8 @@ type Snapshot struct {
 type Service interface {
 	Snapshot(context.Context) (Snapshot, error)
 	Execute(context.Context, Command) (Snapshot, error)
+	History(context.Context) (history.Snapshot, error)
+	ClearHistory(context.Context) error
+	ExportConfig(context.Context) ([]byte, error)
 	Close(context.Context) error
 }
