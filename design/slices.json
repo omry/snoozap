@@ -62,7 +62,11 @@
           "internal/cli/cli.go",
           "internal/engine/engine_test.go",
           "internal/engine/rules_test.go",
-          "tests/windows/application_test.go"
+          "tests/windows/application_test.go",
+          "cmd/snoozap/main.go",
+          "internal/config/config.go",
+          "internal/config/config_test.go",
+          "internal/model/model.go"
         ],
         "dependencies": [
           "snoozap/1"
