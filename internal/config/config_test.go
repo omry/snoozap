@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -136,7 +137,7 @@ func (c fixedClock) Now() time.Time { return c.at }
 
 func newEngine(t *testing.T, power *fakePower, configError string) *engine.Engine {
 	t.Helper()
-	e := engine.New(context.Background(), power, fixedClock{time.Unix(123, 0)}, configError)
+	e := engine.New(context.Background(), power, fixedClock{time.Unix(123, 0)}, configError, manualOptions())
 	t.Cleanup(func() { _ = e.Close(context.Background()) })
 	return e
 }
@@ -323,7 +324,7 @@ func TestConcurrentControlsRemainSerialized(t *testing.T) {
 func TestCancellationAndCloseFailure(t *testing.T) {
 	p := &fakePower{closeErr: errors.New("close failed")}
 	ctx, cancel := context.WithCancel(context.Background())
-	e := engine.New(ctx, p, nil, "")
+	e := engine.New(ctx, p, nil, "", manualOptions())
 	mode(t, e, model.Awake)
 	cancel()
 	deadline, done := context.WithTimeout(context.Background(), time.Second)
@@ -355,7 +356,7 @@ func TestConsoleUsesOneServiceAndClosesOnEOF(t *testing.T) {
 		if dir != "chosen-directory" {
 			t.Fatal("data directory not passed to composition")
 		}
-		return engine.New(ctx, p, nil, ""), nil
+		return engine.New(ctx, p, nil, "", manualOptions()), nil
 	}
 	input := "mode awake\nstatus --json\nstatus --json\n"
 	code := cli.Run(context.Background(), []string{"run", "--data-dir", "chosen-directory"}, strings.NewReader(input), &out, &stderr, start)
@@ -407,7 +408,7 @@ func TestConsoleCancellationWithOpenInputReleasesResources(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		done <- cli.Run(ctx, []string{"run"}, in, out, io.Discard, func(ctx context.Context, _ string) (model.Service, error) {
-			return engine.New(ctx, p, nil, ""), nil
+			return engine.New(ctx, p, nil, "", manualOptions()), nil
 		})
 	}()
 	if _, err := io.WriteString(commands, "mode awake\n"); err != nil {
@@ -456,7 +457,7 @@ func TestConsoleFailuresReleaseResources(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			start := func(ctx context.Context, _ string) (model.Service, error) {
-				return engine.New(ctx, tc.power, nil, ""), nil
+				return engine.New(ctx, tc.power, nil, "", manualOptions()), nil
 			}
 			code := cli.Run(context.Background(), []string{"run"}, strings.NewReader(tc.input), tc.out, io.Discard, start)
 			if code != tc.want {
@@ -527,7 +528,7 @@ func TestOutputFailureWhileHoldingReleasesRequest(t *testing.T) {
 	for _, successfulWrites := range []int{1, 2} {
 		p := &fakePower{}
 		code := cli.Run(context.Background(), []string{"run"}, strings.NewReader("mode awake\nstatus --json\n"), &failAfterWriter{successfulWrites}, io.Discard, func(ctx context.Context, _ string) (model.Service, error) {
-			return engine.New(ctx, p, nil, ""), nil
+			return engine.New(ctx, p, nil, "", manualOptions()), nil
 		})
 		_, active, closed := p.state()
 		if code != 1 || active || closed != 1 {
@@ -545,10 +546,196 @@ func TestStartupAndInputFailuresAreOperationalErrors(t *testing.T) {
 	}
 	p := &fakePower{}
 	code = cli.Run(context.Background(), []string{"run"}, failingReader{}, io.Discard, io.Discard, func(ctx context.Context, _ string) (model.Service, error) {
-		return engine.New(ctx, p, nil, "configuration rejected"), nil
+		return engine.New(ctx, p, nil, "configuration rejected", manualOptions()), nil
 	})
 	_, active, closed := p.state()
 	if code != 1 || active || closed != 1 {
 		t.Fatal("input failure did not close its runtime")
+	}
+}
+
+func manualOptions() engine.Options {
+	return engine.Options{ReadPower: func(context.Context) (model.Battery, error) { return model.Battery{Source: "ac", Known: true}, nil }}
+}
+
+func TestApplicationRuleDefaultsAndStrictFields(t *testing.T) {
+	input := `{"schema_version":1,"probes":{"render":{"type":"process","name":"render.exe"},"ac":{"type":"power","source":"ac"}},"rules":[{"id":"work","when":{"all":[{"probe":"render"},{"probe":"ac"}]}}]}`
+	cfg, err := config.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Probes["render"]
+	if !p.Enabled || p.IntervalMS != 5000 || p.TimeoutMS != 2000 || p.OnError != "retain" || p.OnStartupUnknown != "wait" || p.GraceSeconds != 60 || !cfg.Rules[0].Enabled || !cfg.Settings.Monitoring || cfg.Settings.Battery.FloorPercent != 20 || cfg.Settings.Battery.ResumePercent != 25 {
+		t.Fatalf("public defaults changed: %+v", cfg)
+	}
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Parse(bytes.NewReader(encoded)); err != nil {
+		t.Fatal("valid typed configuration does not round trip:", err)
+	}
+	bad := []string{
+		`{"schema_version":1,"settings":null}`,
+		`{"schema_version":1,"settings":{"Monitoring":false}}`,
+		`{"schema_version":1,"settings":{"monitoring":null}}`,
+		`{"schema_version":1,"settings":{"battery":{"floor_percent":0}}}`,
+		`{"schema_version":1,"settings":{"battery":{"floor_percent":25,"resume_percent":25}}}`,
+		`{"schema_version":1,"settings":{"battery":{"resume_percent":101}}}`,
+		`{"schema_version":1,"settings":{"battery":{"AC_ONLY":true}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"process","name":"app.exe","enabled":null}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"process","Name":"app.exe"}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"process","name":"app.exe","source":"ac"}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"process","name":"app.exe","executable":"C:\\app.exe"}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"process","name":"folder/app.exe"}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"process","name":"app\u001b.exe"}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"process","executable":"relative.exe"}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"power","source":"solar"}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"power","source":"ac","name":"app.exe"}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"power","source":"ac","timeout_ms":5000}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"power","source":"ac","interval_ms":-1}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"power","source":"ac","timeout_ms":1.2}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"power","source":"ac","grace_seconds":9223372036854775807}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"power","source":"ac","on_error":"ignore"}}}`,
+		`{"schema_version":1,"probes":{"p":{"type":"power","source":"ac","on_startup_unknown":"active"}}}`,
+		`{"schema_version":1,"rules":[{"id":"r","when":{"probe":"missing"}}]}`,
+		`{"schema_version":1,"rules":[{"id":"r","when":{"all":[]}}]}`,
+		`{"schema_version":1,"rules":[{"id":"r","when":{"not":null}}]}`,
+		`{"schema_version":1,"rules":[{"id":"r","when":{"all":[],"any":[]}}]}`,
+		`{"schema_version":1,"rules":[{"id":"r","when":{"probe":""}}]}`,
+	}
+	for _, input := range bad {
+		if _, err := config.Parse(strings.NewReader(input)); err == nil {
+			t.Errorf("invalid application configuration accepted: %s", input)
+		}
+	}
+}
+func TestRuleResourceLimitsAndReferenceIntegrity(t *testing.T) {
+	prefix := `{"schema_version":1,"probes":{"p":{"type":"power","source":"ac"}},"rules":[{"id":"r","when":`
+	deep := `{"probe":"p"}`
+	for range 32 {
+		deep = `{"not":` + deep + `}`
+	}
+	if _, err := config.Parse(strings.NewReader(prefix + deep + `} ]}`)); err == nil {
+		t.Fatal("expression deeper than 32 accepted")
+	}
+	cfg := config.Empty()
+	for n := range 257 {
+		cfg.Probes[fmt.Sprintf("p%d", n)] = config.Probe{Type: "power", Enabled: true, Source: "ac", IntervalMS: 5000, TimeoutMS: 2000, OnError: "retain", OnStartupUnknown: "wait", GraceSeconds: 60}
+	}
+	if err := config.Validate(cfg); err == nil {
+		t.Fatal("more than 256 probes accepted")
+	}
+	cfg = config.Empty()
+	p := config.Probe{Type: "power", Enabled: true, Source: "ac", IntervalMS: 5000, TimeoutMS: 2000, OnError: "retain", OnStartupUnknown: "wait", GraceSeconds: 60}
+	cfg.Probes["p"] = p
+	for n := range 257 {
+		cfg.Rules = append(cfg.Rules, config.Rule{ID: fmt.Sprintf("r%d", n), Enabled: true, When: config.Expression{Probe: "p"}})
+	}
+	if err := config.Validate(cfg); err == nil {
+		t.Fatal("more than 256 rules accepted")
+	}
+	cfg.Rules = []config.Rule{{ID: "same", When: config.Expression{Probe: "p"}}, {ID: "same", When: config.Expression{Probe: "p"}}}
+	if err := config.Validate(cfg); err == nil {
+		t.Fatal("duplicate rule identifiers accepted")
+	}
+	group := make([]config.Expression, 4096)
+	for n := range group {
+		group[n] = config.Expression{Probe: "p"}
+	}
+	cfg.Rules = []config.Rule{{ID: "r", When: config.Expression{Any: group}}}
+	if err := config.Validate(cfg); err == nil {
+		t.Fatal("expression node limit ignored")
+	}
+}
+func TestStoreValidatesBeforeReplacing(t *testing.T) {
+	writes := 0
+	var saved []byte
+	store := config.Store{Replace: func(data []byte) error { writes++; saved = append([]byte(nil), data...); return nil }}
+	invalid := config.Empty()
+	invalid.SchemaVersion = 2
+	if err := store.Save(invalid); err == nil || writes != 0 {
+		t.Fatal("invalid candidate reached persistent storage")
+	}
+	if err := store.Save(config.Empty()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Parse(bytes.NewReader(saved)); err != nil || writes != 1 {
+		t.Fatal("saved config is not a valid complete candidate")
+	}
+	store.Replace = func([]byte) error { return errors.New("disk failure") }
+	if err := store.Save(config.Empty()); err == nil {
+		t.Fatal("failed replacement reported success")
+	}
+}
+
+func TestStoreRefusesSerializedConfigurationOverParserLimit(t *testing.T) {
+	candidate := config.Empty()
+	for n := range 256 {
+		candidate.Probes[fmt.Sprintf("p%d", n)] = config.Probe{
+			Type:             "process",
+			Enabled:          true,
+			OnStartupUnknown: "wait",
+			OnError:          "retain",
+			GraceSeconds:     60,
+			IntervalMS:       5000,
+			TimeoutMS:        2000,
+			Name:             strings.Repeat("x", 4000),
+		}
+	}
+	if err := config.Validate(candidate); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.MarshalIndent(candidate, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded = append(encoded, '\n')
+	if len(encoded) <= config.MaxBytes {
+		t.Fatalf("test candidate is not oversized: %d", len(encoded))
+	}
+
+	writes := 0
+	var saved []byte
+	store := config.Store{Replace: func(data []byte) error {
+		writes++
+		saved = append([]byte(nil), data...)
+		return nil
+	}}
+	if err := store.Save(config.Empty()); err != nil {
+		t.Fatal(err)
+	}
+	prior := append([]byte(nil), saved...)
+	if err := store.Save(candidate); err == nil || writes != 1 || !bytes.Equal(saved, prior) {
+		t.Fatalf("oversized candidate was persisted: err=%v writes=%d saved=%d prior=%d", err, writes, len(saved), len(prior))
+	}
+	if _, err := config.Parse(bytes.NewReader(saved)); err != nil {
+		t.Fatalf("prior persisted configuration was damaged: %v", err)
+	}
+}
+func TestConsoleTimedModesAndConfigApply(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "application config.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"settings":{"monitoring":false}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p := &fakePower{}
+	var out, stderr bytes.Buffer
+	writes := 0
+	code := cli.Run(context.Background(), []string{"run"}, strings.NewReader("mode awake --for 1h\nmonitor off\nconfig apply \""+path+"\"\nstatus --json\nstop\n"), &out, &stderr, func(ctx context.Context, _ string) (model.Service, error) {
+		options := manualOptions()
+		options.Save = func(config.Config) error { writes++; return nil }
+		return engine.New(ctx, p, nil, "", options), nil
+	})
+	if code != 0 || writes != 2 || !strings.Contains(out.String(), `"mode":"awake"`) || !strings.Contains(out.String(), `"monitoring":false`) || !strings.Contains(out.String(), `"deadline":`) || stderr.Len() != 0 {
+		t.Fatalf("new console flow failed: code=%d writes=%d stdout=%s stderr=%s", code, writes, out.String(), stderr.String())
+	}
+	for _, command := range []string{"mode auto --for 1h", "mode awake --for 0s", "mode awake --for -1m", "mode awake --for garbage", "mode awake --wrong 1h"} {
+		code := cli.Run(context.Background(), []string{"run"}, strings.NewReader(command+"\nstop\n"), io.Discard, io.Discard, func(ctx context.Context, _ string) (model.Service, error) {
+			return engine.New(ctx, &fakePower{}, nil, "", manualOptions()), nil
+		})
+		if code != 2 {
+			t.Fatalf("invalid timer %q returned %d", command, code)
+		}
 	}
 }
