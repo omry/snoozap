@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/omry/snoozap/internal/cli"
 	"github.com/omry/snoozap/internal/config"
 	"github.com/omry/snoozap/internal/engine"
+	"github.com/omry/snoozap/internal/ipc"
 	"github.com/omry/snoozap/internal/model"
 	"github.com/omry/snoozap/internal/platform/windows"
 	powerprobe "github.com/omry/snoozap/internal/probe/power"
@@ -23,6 +25,7 @@ type runtimeOwner struct {
 	model.Service
 	owner     *windows.Owner
 	lifecycle *windows.Lifecycle
+	listener  io.Closer
 	once      sync.Once
 	err       error
 }
@@ -32,7 +35,7 @@ func (r *runtimeOwner) Close(ctx context.Context) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	r.once.Do(func() { r.err = errors.Join(r.lifecycle.Close(), r.owner.Close()) })
+	r.once.Do(func() { r.err = errors.Join(r.listener.Close(), r.lifecycle.Close(), r.owner.Close()) })
 	return errors.Join(err, r.err)
 }
 func start(ctx context.Context, dir string) (model.Service, error) {
@@ -83,11 +86,21 @@ func start(ctx context.Context, dir string) (model.Service, error) {
 		}
 		return nil
 	}}
-	return &runtimeOwner{Service: engine.New(ctx, power, windows.Clock{}, message, options), owner: owner, lifecycle: lifecycle}, nil
+	service := engine.New(ctx, power, windows.Clock{}, message, options)
+	listener, err := ipc.Listen(ctx, service)
+	if err != nil {
+		service.Close(context.Background())
+		lifecycle.Close()
+		owner.Close()
+		return nil, err
+	}
+	return &runtimeOwner{Service: service, owner: owner, lifecycle: lifecycle, listener: listener}, nil
 }
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	code := cli.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, start)
+	code := cli.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, start, func(context.Context) (model.Service, error) {
+		return ipc.NewClient(ipc.Dial), nil
+	})
 	cancel()
 	os.Exit(code)
 }
