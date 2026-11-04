@@ -19,7 +19,12 @@ const (
 
 func (m Mode) Valid() bool { return m == Auto || m == Awake || m == AllowSleep }
 
-var ErrStopped = errors.New("runtime stopped")
+var (
+	ErrStopped      = errors.New("runtime stopped")
+	ErrNoInstance   = errors.New("no running SnooZap instance")
+	ErrInvalidInput = errors.New("invalid command or configuration")
+	ErrUnavailable  = errors.New("operation unavailable")
+)
 
 type Clock interface{ Now() time.Time }
 type Timer interface {
@@ -129,6 +134,9 @@ type Snapshot struct {
 }
 type Service interface {
 	Snapshot(context.Context) (Snapshot, error)
+	// Subscribe returns an initial snapshot followed by copied latest-only updates.
+	// Cancellation detaches the subscriber; owner shutdown closes the channel.
+	Subscribe(context.Context) (<-chan Snapshot, error)
 	Execute(context.Context, Command) (Snapshot, error)
 	History(context.Context) (history.Snapshot, error)
 	ClearHistory(context.Context) error

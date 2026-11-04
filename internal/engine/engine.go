@@ -22,6 +22,7 @@ type Options struct {
 }
 type response struct {
 	snapshot      model.Snapshot
+	updates       <-chan model.Snapshot
 	history       history.Snapshot
 	configuration config.Config
 	err           error
@@ -37,6 +38,7 @@ type Engine struct {
 	closeErr error
 }
 type loop struct {
+	subscribers               map[chan model.Snapshot]context.Context
 	history                   history.Store
 	ctx                       context.Context
 	options                   Options
@@ -85,7 +87,17 @@ func New(ctx context.Context, power model.PowerBackend, clock model.Clock, confi
 	return e
 }
 func (e *Engine) Snapshot(ctx context.Context) (model.Snapshot, error) {
-	return e.Execute(ctx, model.Command{Operation: "status"})
+	s, err := e.Execute(ctx, model.Command{Operation: "status"})
+	if s.SchemaVersion == 1 && s.NativeError != "" {
+		// A successful observation still succeeds when a native retry fails.
+		// The snapshot reports the desired and rejected request separately.
+		return s, nil
+	}
+	return s, err
+}
+func (e *Engine) Subscribe(ctx context.Context) (<-chan model.Snapshot, error) {
+	r := e.call(ctx, model.Command{Operation: "subscribe"})
+	return r.updates, r.err
 }
 func (e *Engine) Execute(ctx context.Context, cmd model.Command) (model.Snapshot, error) {
 	r := e.call(ctx, cmd)
@@ -167,6 +179,7 @@ func copyInt(p *int) *int {
 	return &v
 }
 func (l *loop) publish(previous model.Snapshot) {
+	l.detachCancelled()
 	if previous.Activity != l.snapshot.Activity {
 		l.record("state", string(l.snapshot.Activity))
 	}
@@ -207,6 +220,22 @@ func (l *loop) publish(previous model.Snapshot) {
 	if !reflect.DeepEqual(previous, l.snapshot) {
 		l.snapshot.Sequence++
 		l.snapshot.UpdatedAt = l.clock.Now()
+		for updates := range l.subscribers {
+			select {
+			case <-updates:
+			default:
+			}
+			updates <- l.view()
+		}
+	}
+}
+
+func (l *loop) detachCancelled() {
+	for updates, ctx := range l.subscribers {
+		if ctx.Err() != nil {
+			delete(l.subscribers, updates)
+			close(updates)
+		}
 	}
 }
 
@@ -378,6 +407,12 @@ func (e *Engine) run(ctx context.Context, power model.PowerBackend, clock model.
 	ownerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	l := &loop{ctx: ownerCtx, power: power, clock: clock, options: options, cfg: config.Empty(), probes: map[string]*probeState{}, jobs: map[string]*poll{}, results: make(chan result, 8), holds: map[string]bool{}, startup: map[string]bool{}}
+	l.subscribers = make(map[chan model.Snapshot]context.Context)
+	defer func() {
+		for updates := range l.subscribers {
+			close(updates)
+		}
+	}()
 	l.snapshot = model.Snapshot{SchemaVersion: 1, Sequence: 1, Mode: model.Auto, Monitoring: true, UpdatedAt: clock.Now(), ConfigurationError: configError, Activity: model.Unknown, Limitations: []string{"An accepted request does not guarantee protection from explicit Sleep or lid close.", "Windows Modern Standby and battery policies can limit SystemRequired requests.", "SnooZap does not request that the display stay on."}}
 	previous := l.view()
 	now := clock.Elapsed()
@@ -415,6 +450,17 @@ func (e *Engine) run(ctx context.Context, power model.PowerBackend, clock model.
 				return
 			}
 			switch r.cmd.Operation {
+			case "subscribe":
+				l.detachCancelled()
+				if len(l.subscribers) >= 64 {
+					r.reply <- response{err: errors.New("too many status subscriptions")}
+					continue
+				}
+				updates := make(chan model.Snapshot, 1)
+				updates <- l.view()
+				l.subscribers[updates] = r.ctx
+				r.reply <- response{updates: updates}
+				continue
 			case "history":
 				r.reply <- response{snapshot: l.view(), history: l.history.Snapshot()}
 				continue
