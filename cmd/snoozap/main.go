@@ -15,13 +15,16 @@ import (
 	"github.com/omry/snoozap/internal/engine"
 	"github.com/omry/snoozap/internal/model"
 	"github.com/omry/snoozap/internal/platform/windows"
+	powerprobe "github.com/omry/snoozap/internal/probe/power"
+	processprobe "github.com/omry/snoozap/internal/probe/process"
 )
 
 type runtimeOwner struct {
 	model.Service
-	owner *windows.Owner
-	once  sync.Once
-	err   error
+	owner     *windows.Owner
+	lifecycle *windows.Lifecycle
+	once      sync.Once
+	err       error
 }
 
 func (r *runtimeOwner) Close(ctx context.Context) error {
@@ -29,10 +32,9 @@ func (r *runtimeOwner) Close(ctx context.Context) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	r.once.Do(func() { r.err = r.owner.Close() })
+	r.once.Do(func() { r.err = errors.Join(r.lifecycle.Close(), r.owner.Close()) })
 	return errors.Join(err, r.err)
 }
-
 func start(ctx context.Context, dir string) (model.Service, error) {
 	owner, err := windows.AcquireOwner()
 	if err != nil {
@@ -43,35 +45,46 @@ func start(ctx context.Context, dir string) (model.Service, error) {
 		owner.Close()
 		return nil, err
 	}
+	lifecycle, err := windows.NewLifecycle()
+	if err != nil {
+		power.Close()
+		owner.Close()
+		return nil, err
+	}
+	processes, err := windows.NewProcesses()
+	if err != nil {
+		lifecycle.Close()
+		power.Close()
+		owner.Close()
+		return nil, err
+	}
 	var configErr error
 	if dir == "" {
 		dir, configErr = os.UserCacheDir()
 		dir = filepath.Join(dir, "SnooZap")
 	}
+	cfg := config.Empty()
 	if configErr == nil {
-		path := filepath.Join(dir, "config.json")
-		info, err := os.Lstat(path)
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-		case err == nil && info.Mode().IsRegular():
-			f, openErr := os.Open(path)
-			if openErr != nil {
-				configErr = errors.New("cannot read startup configuration")
-			} else {
-				_, configErr = config.Parse(f)
-				f.Close()
-			}
-		default:
-			configErr = errors.New("startup configuration must be a readable regular file")
-		}
+		cfg, configErr = windows.LoadConfig(dir)
 	}
 	message := ""
 	if configErr != nil {
-		message = configErr.Error()
+		cfg = config.Empty()
+		message = "Startup configuration rejected; automatic work is inactive"
 	}
-	return &runtimeOwner{Service: engine.New(ctx, power, nil, message), owner: owner}, nil
+	reader := windows.SystemPower{}
+	store := config.Store{Replace: func(data []byte) error { return windows.SaveConfig(dir, data) }}
+	options := engine.Options{Configuration: cfg, ReadPower: reader.ReadPower, Save: store.Save, Events: lifecycle.Events, Resolve: func(p config.Probe) model.Probe {
+		switch p.Type {
+		case "process":
+			return processprobe.Probe{Reader: processes, Name: p.Name, Executable: p.Executable}
+		case "power":
+			return powerprobe.Probe{Reader: reader, Source: p.Source}
+		}
+		return nil
+	}}
+	return &runtimeOwner{Service: engine.New(ctx, power, windows.Clock{}, message, options), owner: owner, lifecycle: lifecycle}, nil
 }
-
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	code := cli.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, start)
