@@ -108,7 +108,11 @@
           "internal/config/config_test.go",
           "internal/history/history_test.go",
           "internal/platform/windows/platform_test.go",
-          "tests/windows/diagnostics_test.go"
+          "tests/windows/diagnostics_test.go",
+          "internal/engine/engine.go",
+          "internal/engine/engine_test.go",
+          "internal/engine/scheduler.go",
+          "internal/model/model.go"
         ],
         "dependencies": [
           "snoozap/2"
