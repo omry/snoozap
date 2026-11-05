@@ -31,6 +31,7 @@ type Probe struct {
 	Name             string `json:"name,omitempty"`
 	Executable       string `json:"executable,omitempty"`
 	WSLDistribution  string `json:"wsl_distribution,omitempty"`
+	LocalEnvironment string `json:"local_environment,omitempty"`
 	Source           string `json:"source,omitempty"`
 }
 type Expression struct {
@@ -185,20 +186,25 @@ func Validate(c Config) error {
 		if p.OnStartupUnknown != "wait" && p.OnStartupUnknown != "hold" || p.OnError != "retain" && p.OnError != "release_after" {
 			return errors.New("invalid probe failure policy")
 		}
-		if p.WSLDistribution != "" {
-			return errors.New("WSL process probes are not available in this increment")
-		}
 		switch p.Type {
 		case "process":
-			if (p.Name == "") == (p.Executable == "") || p.Source != "" || !clean(p.Name) || !clean(p.Executable) || strings.ContainsAny(p.Name, `/\`) {
+			if (p.Name == "") == (p.Executable == "") || p.Source != "" || p.LocalEnvironment != "" || !clean(p.Name) || !clean(p.Executable) || strings.ContainsAny(p.Name, `/\`) {
 				return errors.New("invalid process probe selector")
 			}
-			if p.Executable != "" && !(len(p.Executable) > 2 && p.Executable[1] == ':' && (p.Executable[2] == '\\' || p.Executable[2] == '/') || strings.HasPrefix(p.Executable, `\\`)) {
+			if p.WSLDistribution != "" {
+				if len(p.WSLDistribution) > 255 || !clean(p.WSLDistribution) || strings.HasPrefix(p.WSLDistribution, "-") || p.Executable != "" && !strings.HasPrefix(p.Executable, "/") {
+					return errors.New("invalid WSL process selector")
+				}
+			} else if p.Executable != "" && !(len(p.Executable) > 2 && p.Executable[1] == ':' && (p.Executable[2] == '\\' || p.Executable[2] == '/') || strings.HasPrefix(p.Executable, `\\`)) {
 				return errors.New("executable path must be absolute")
 			}
 		case "power":
-			if p.Source != "ac" && p.Source != "battery" || p.Name != "" || p.Executable != "" {
+			if p.Source != "ac" && p.Source != "battery" || p.Name != "" || p.Executable != "" || p.WSLDistribution != "" || p.LocalEnvironment != "" {
 				return errors.New("invalid power probe")
+			}
+		case "t3":
+			if !safeID(p.LocalEnvironment) || p.Name != "" || p.Executable != "" || p.Source != "" || p.WSLDistribution != "" {
+				return errors.New("invalid T3 local environment reference")
 			}
 		default:
 			return errors.New("unsupported probe type")
