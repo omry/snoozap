@@ -259,7 +259,7 @@
     {
       "id": "snoozap/6",
       "parent": null,
-      "state": "planned",
+      "state": "replaced",
       "role": "implementation",
       "intent": {
         "title": "[snoozap/6] Add local HTTP and power conditions",
@@ -270,6 +270,46 @@
           "internal/probe/registry.go",
           "internal/probe/http/http_test.go",
           "internal/probe/registry_test.go"
+        ],
+        "dependencies": [
+          "snoozap/5.1"
+        ],
+        "acceptance": [
+          "Every HTTP operator, JSON type mismatch, exists absence, malformed JSON, timeout and 1 MiB limit follows the HLD.",
+          "IPv4/IPv6 loopback works; DNS rebinding, redirects, proxies, nonlocal destinations and unsafe credential header values are rejected.",
+          "One request per probe is in flight; source failures and power conditions combine with real T3/process observations through the same engine."
+        ]
+      },
+      "display": {
+        "summary": "Typed HTTP checks and probe scheduling",
+        "production": [
+          450,
+          700
+        ],
+        "tests": [
+          550,
+          850
+        ]
+      }
+    },
+    {
+      "id": "snoozap/6.1",
+      "parent": "snoozap/6",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/6.1] Add local HTTP and power conditions",
+        "responsibility": "Complete the built-in registry using existing process/T3 adapters, local-only typed HTTP GET and power-source conditions. Resolve and pin actual loopback addresses for each request; forbid redirects, proxy routing and URL userinfo. Fetch credential headers only from OS refs and sanitize errors before history. Implement JSON Pointer/scalar comparisons, absent-field semantics and bounded scheduling. No executable expressions/scripts or remote HTTP probes.",
+        "paths": [
+          "internal/probe/http/http.go",
+          "internal/probe/power/power.go",
+          "internal/probe/registry.go",
+          "internal/probe/http/http_test.go",
+          "internal/probe/registry_test.go",
+          "internal/config/config.go",
+          "internal/config/config_test.go",
+          "cmd/snoozap/main.go",
+          "tests/windows/http_test.go"
         ],
         "dependencies": [
           "snoozap/5.1"
@@ -311,7 +351,7 @@
           "tests/windows/tray_test.go"
         ],
         "dependencies": [
-          "snoozap/6"
+          "snoozap/6.1"
         ],
         "acceptance": [
           "Native tray mouse/keyboard actions and window controls agree with CLI under empty config, active work, unknown sources, timer replacement/expiry, battery cutoff and OS failure.",
