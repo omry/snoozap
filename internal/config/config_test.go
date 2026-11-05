@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,246 @@ func TestEmptyConfigurationNeverCreatesWork(t *testing.T) {
 	cfg := config.Empty()
 	if cfg.SchemaVersion != 1 || cfg.Probes == nil || cfg.Rules == nil {
 		t.Fatal("empty configuration must carry explicit version and empty collections")
+	}
+}
+
+func TestHTTPDefaultsTypedValuesAndPortableReferences(t *testing.T) {
+	for _, fields := range []string{"", `,"value":null`, `,"operator":"less_than","value":1e999999999999999999999`} {
+		cfg, err := config.Parse(strings.NewReader(`{"schema_version":1,"probes":{"web":{"type":"http","url":"http://localhost:1234/status"` + fields + `,"credential_headers":{"Authorization":"local-key"}}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := cfg.Probes["web"]
+		if p.Pointer != "" || p.IntervalMS != 5000 || p.TimeoutMS != 2000 || p.Operator == "" || p.Value == nil {
+			t.Fatal("missing HTTP defaults", p)
+		}
+		if fields == "" && string(p.Value) != "true" || strings.Contains(fields, "null") && string(p.Value) != "null" {
+			t.Fatal("lost scalar default or null", p)
+		}
+		data, err := config.Export(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := config.Parse(bytes.NewReader(data))
+		if err != nil || decoded.Probes["web"].CredentialHeaders["Authorization"] != "local-key" {
+			t.Fatal("portable reference failed", err)
+		}
+		clone := config.Clone(cfg)
+		clone.Probes["web"].Value[0] = '0'
+		clone.Probes["web"].CredentialHeaders["Authorization"] = "other"
+		if cfg.Probes["web"].CredentialHeaders["Authorization"] != "local-key" || !bytes.Equal(cfg.Probes["web"].Value, decoded.Probes["web"].Value) {
+			t.Fatal("clone shares HTTP config memory")
+		}
+	}
+}
+
+func TestHTTPRejectsUnsafeOrIncompatibleConfiguration(t *testing.T) {
+	for _, fields := range []string{
+		`"url":"https://user:password@localhost/"`, `"url":"http://192.168.56.1/"`, `"url":"file:///tmp/status"`,
+		`"url":"http://localhost:0/"`, `"url":"http://localhost:65536/"`, `"url":"http://localhost:/"`,
+		`"url":"http://localhost/#fragment"`, `"url":"http://[::1%25lo]/"`,
+		`"url":"http://localhost/","pointer":"no-slash"`, `"url":"http://localhost/","pointer":"/~2"`,
+		`"url":"http://localhost/","operator":"script"`, `"url":"http://localhost/","operator":"less_than","value":"3"`,
+		`"url":"http://localhost/","value":[]`, `"url":"http://localhost/","value":{}`, `"url":"http://localhost/","value":true,"value":false`,
+		`"url":"http://localhost/","name":"app"`, `"url":"http://localhost/","source":"ac"`,
+		`"url":"http://localhost/","local_environment":"local"`, `"url":"http://localhost/","wsl_distribution":"Ubuntu"`,
+		`"url":"http://localhost/","headers":{"Authorization":"inline-secret"}`, `"url":"http://localhost/","credential_headers":{"Host":"key"}`,
+		`"url":"http://localhost/","credential_headers":{"Authorization":"secret with spaces"}`, `"url":"http://localhost/","credential_headers":{"Bad\nName":"key"}`,
+		`"url":"http://localhost/","credential_headers":{"Authorization":"key","authorization":"other"}`,
+		`"url":"http://localhost/","credential_headers":null`, `"url":"http://localhost/","pointer":null`, `"url":"http://localhost/","operator":null`,
+		`"url":"http://localhost/","URL":"http://elsewhere/"`, `"url":null`,
+	} {
+		if _, err := config.Parse(strings.NewReader(`{"schema_version":1,"probes":{"web":{"type":"http",` + fields + `}}}`)); err == nil {
+			t.Fatal("unsafe HTTP config accepted", fields)
+		}
+	}
+	for _, name := range []string{"Connection", "Forwarded", "X-Forwarded-Host", "Proxy-Authorization", "Content-Length", "Transfer-Encoding", "Trailer", "TE", "Upgrade"} {
+		input := fmt.Sprintf(`{"schema_version":1,"probes":{"web":{"type":"http","url":"http://localhost/","credential_headers":{%q:"key"}}}}`, name)
+		if _, err := config.Parse(strings.NewReader(input)); err == nil {
+			t.Fatal("routing header accepted", name)
+		}
+	}
+	for _, probe := range []string{`{"type":"power","source":"ac","value":null}`, `{"type":"process","name":"app","pointer":"/x"}`, `{"type":"t3","local_environment":"local","credential_headers":{}}`} {
+		if _, err := config.Parse(strings.NewReader(`{"schema_version":1,"probes":{"p":` + probe + `}}`)); err == nil {
+			t.Fatal("HTTP fields accepted by another adapter", probe)
+		}
+	}
+}
+
+func TestHTTPResourceLimitsAlsoApplyToProgrammaticCandidates(t *testing.T) {
+	for _, p := range []config.Probe{
+		{URL: "http://localhost", Value: json.RawMessage(strings.Repeat(" ", config.MaxBytes+1))},
+		{URL: "http://localhost", Value: json.RawMessage("true false")},
+		{URL: "http://localhost", Pointer: "/" + strings.Repeat("x", 32767)},
+		{URL: "http://localhost", Pointer: "/~"},
+	} {
+		if config.ValidateHTTP(p) == nil {
+			t.Fatal("programmatic HTTP resource/JSON limit bypassed")
+		}
+	}
+	p := config.Probe{URL: "http://localhost", CredentialHeaders: map[string]string{}}
+	for i := 0; i < 33; i++ {
+		p.CredentialHeaders[fmt.Sprintf("X-Key-%d", i)] = "local-key"
+	}
+	if config.ValidateHTTP(p) == nil {
+		t.Fatal("credential header limit bypassed")
+	}
+}
+
+func TestHTTPComparisonExponentBoundary(t *testing.T) {
+	for _, sign := range []string{"", "+", "-"} {
+		for _, digits := range []int{config.MaxExponentDigits, config.MaxExponentDigits + 1} {
+			value := "1e" + sign + strings.Repeat("9", digits)
+			input := `{"schema_version":1,"probes":{"web":{"type":"http","url":"http://localhost","value":` + value + `}}}`
+			_, parseErr := config.Parse(strings.NewReader(input))
+			validateErr := config.ValidateHTTP(config.Probe{Type: "http", URL: "http://localhost", Value: json.RawMessage(value)})
+			wantAccepted := digits == config.MaxExponentDigits
+			if (parseErr == nil) != wantAccepted || (validateErr == nil) != wantAccepted {
+				t.Fatalf("exponent sign=%q digits=%d: parse=%v validate=%v", sign, digits, parseErr, validateErr)
+			}
+		}
+	}
+}
+
+func TestHTTPComparisonUTF8Validation(t *testing.T) {
+	validValue := json.RawMessage(`"café 🌙"`)
+	validProbe := config.Probe{Type: "http", URL: "http://localhost", Value: validValue}
+	if err := config.ValidateHTTP(validProbe); err != nil {
+		t.Fatalf("valid Unicode comparison rejected: %v", err)
+	}
+	validConfig := `{"schema_version":1,"probes":{"web":{"type":"http","url":"http://localhost","value":"café 🌙"}}}`
+	if _, err := config.Parse(strings.NewReader(validConfig)); err != nil {
+		t.Fatalf("valid Unicode configuration rejected: %v", err)
+	}
+
+	invalidValue := json.RawMessage([]byte{'"', 'b', 'a', 'd', 0xff, '"'})
+	invalidProbe := config.Probe{Type: "http", URL: "http://localhost", Value: invalidValue}
+	if err := config.ValidateHTTP(invalidProbe); err == nil {
+		t.Fatal("malformed UTF-8 comparison accepted")
+	}
+	invalidConfig := append([]byte(`{"schema_version":1,"probes":{"web":{"type":"http","url":"http://localhost","value":"bad`), 0xff)
+	invalidConfig = append(invalidConfig, []byte(`"}}}`)...)
+	if _, err := config.Parse(bytes.NewReader(invalidConfig)); err == nil {
+		t.Fatal("malformed UTF-8 configuration accepted")
+	}
+}
+
+func TestHTTPSelectorUTF8Validation(t *testing.T) {
+	validURL := "http://localhost/café/�"
+	validPointer := "/café/�"
+	validValue := json.RawMessage(`"�"`)
+	validProbe := config.Probe{
+		Type:             "http",
+		Enabled:          true,
+		OnStartupUnknown: "wait",
+		OnError:          "retain",
+		GraceSeconds:     60,
+		IntervalMS:       5000,
+		TimeoutMS:        2000,
+		URL:              validURL,
+		Pointer:          validPointer,
+		Value:            validValue,
+	}
+	if err := config.ValidateHTTP(validProbe); err != nil {
+		t.Fatalf("valid Unicode selectors rejected: %v", err)
+	}
+	if err := config.Validate(config.Config{SchemaVersion: 1, Probes: map[string]config.Probe{"web": validProbe}, Rules: []config.Rule{}, Settings: config.Empty().Settings}); err != nil {
+		t.Fatalf("valid Unicode candidate rejected: %v", err)
+	}
+	tokens, err := config.PointerTokens(validPointer)
+	if err != nil || !reflect.DeepEqual(tokens, []string{"café", "�"}) {
+		t.Fatalf("valid Unicode pointer changed: %v %v", tokens, err)
+	}
+	validConfig := `{"schema_version":1,"probes":{"web":{"type":"http","url":"http://localhost/café/�","pointer":"/café/�","value":"�"}}}`
+	parsed, err := config.Parse(strings.NewReader(validConfig))
+	if err != nil {
+		t.Fatalf("valid Unicode configuration rejected: %v", err)
+	}
+	parsedProbe := parsed.Probes["web"]
+	if parsedProbe.URL != validURL || parsedProbe.Pointer != validPointer || !bytes.Equal(parsedProbe.Value, validValue) {
+		t.Fatalf("valid Unicode selectors changed: %+v", parsedProbe)
+	}
+
+	badByte := byte(0xff)
+	badURLConfig := append([]byte(`{"schema_version":1,"probes":{"web":{"type":"http","url":"http://localhost/bad`), badByte)
+	badURLConfig = append(badURLConfig, []byte(`"}}}`)...)
+	if _, err := config.Parse(bytes.NewReader(badURLConfig)); err == nil {
+		t.Fatal("malformed UTF-8 URL accepted by Parse")
+	}
+	badPointerConfig := append([]byte(`{"schema_version":1,"probes":{"web":{"type":"http","url":"http://localhost","pointer":"/bad`), badByte)
+	badPointerConfig = append(badPointerConfig, []byte(`"}}}`)...)
+	if _, err := config.Parse(bytes.NewReader(badPointerConfig)); err == nil {
+		t.Fatal("malformed UTF-8 pointer accepted by Parse")
+	}
+
+	badURL := "http://localhost/bad" + string([]byte{badByte})
+	badURLProbe := validProbe
+	badURLProbe.URL = badURL
+	if err := config.ValidateHTTP(badURLProbe); err == nil {
+		t.Fatal("malformed UTF-8 URL accepted by ValidateHTTP")
+	}
+	if err := config.Validate(config.Config{SchemaVersion: 1, Probes: map[string]config.Probe{"web": badURLProbe}, Rules: []config.Rule{}, Settings: config.Empty().Settings}); err == nil {
+		t.Fatal("malformed UTF-8 URL accepted by Validate")
+	}
+	badPointer := "/bad" + string([]byte{badByte})
+	badPointerProbe := validProbe
+	badPointerProbe.Pointer = badPointer
+	if err := config.ValidateHTTP(badPointerProbe); err == nil {
+		t.Fatal("malformed UTF-8 pointer accepted by ValidateHTTP")
+	}
+	if _, err := config.PointerTokens(badPointer); err == nil {
+		t.Fatal("malformed UTF-8 pointer accepted by PointerTokens")
+	}
+	if err := config.Validate(config.Config{SchemaVersion: 1, Probes: map[string]config.Probe{"web": badPointerProbe}, Rules: []config.Rule{}, Settings: config.Empty().Settings}); err == nil {
+		t.Fatal("malformed UTF-8 pointer accepted by Validate")
+	}
+}
+
+func TestHTTPRejectsIllFormedSurrogateEscapes(t *testing.T) {
+	for _, test := range []struct {
+		name, field, raw string
+		wantErr          bool
+	}{
+		{name: "value lone high", field: "value", raw: `"\ud800"`, wantErr: true},
+		{name: "value lone low", field: "value", raw: `"\udfff"`, wantErr: true},
+		{name: "value high nonlow", field: "value", raw: `"\ud800\u1234"`, wantErr: true},
+		{name: "URL lone high", field: "url", raw: `"http://localhost/\ud800"`, wantErr: true},
+		{name: "URL lone low", field: "url", raw: `"http://localhost/\udfff"`, wantErr: true},
+		{name: "URL high nonlow", field: "url", raw: `"http://localhost/\ud800\u1234"`, wantErr: true},
+		{name: "URL embedded high", field: "url", raw: `"http://localhost/pre\ud800post"`, wantErr: true},
+		{name: "pointer lone high", field: "pointer", raw: `"/\ud800"`, wantErr: true},
+		{name: "pointer lone low", field: "pointer", raw: `"/\udfff"`, wantErr: true},
+		{name: "pointer high nonlow", field: "pointer", raw: `"/\ud800\u1234"`, wantErr: true},
+		{name: "pointer embedded low", field: "pointer", raw: `"/pre\udfffsuffix"`, wantErr: true},
+		{name: "valid URL pair", field: "url", raw: `"http://localhost/\ud83c\udf19"`},
+		{name: "valid pointer pair", field: "pointer", raw: `"/\ud83c\udf19"`},
+		{name: "valid value pair", field: "value", raw: `"\ud83c\udf19"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			probe := `"type":"http",`
+			if test.field != "url" {
+				probe += `"url":"http://localhost",`
+			}
+			input := `{"schema_version":1,"probes":{"web":{` + probe + `"` + test.field + `":` + test.raw + `}}}`
+			if _, err := config.Parse(strings.NewReader(input)); (err != nil) != test.wantErr {
+				t.Fatalf("Parse error=%v, wantErr=%t", err, test.wantErr)
+			}
+		})
+	}
+	for n, raw := range []json.RawMessage{json.RawMessage(`"\ud800"`), json.RawMessage(`"\udfff"`), json.RawMessage(`"x\ud800y"`), json.RawMessage(`"\ud800\u1234"`)} {
+		t.Run(fmt.Sprintf("programmatic comparison %d", n), func(t *testing.T) {
+			if err := config.ValidateHTTP(config.Probe{Type: "http", URL: "http://localhost", Value: raw}); err == nil {
+				t.Fatalf("ill-formed surrogate comparison accepted: %s", raw)
+			}
+		})
+	}
+	for _, input := range []string{
+		`{"schema_version":1,"probes":{"web":{"type":"http","url":"http://localhost/\ud83c\udf19","pointer":"/\ud83c\udf19","value":"\ufffd"}}}`,
+		`{"schema_version":1,"probes":{"web":{"type":"http","url":"http://localhost","value":"\\uD800"}}}`,
+	} {
+		if _, err := config.Parse(strings.NewReader(input)); err != nil {
+			t.Fatalf("valid JSON string encoding rejected: %v", err)
+		}
 	}
 }
 
@@ -356,11 +597,113 @@ type fixedClock struct{ at time.Time }
 
 func (c fixedClock) Now() time.Time { return c.at }
 
+type alwaysActiveProbe struct{}
+
+func (alwaysActiveProbe) Check(context.Context) model.Observation {
+	return model.Observation{State: model.Active}
+}
+
 func newEngine(t *testing.T, power *fakePower, configError string) *engine.Engine {
 	t.Helper()
 	e := engine.New(context.Background(), power, fixedClock{time.Unix(123, 0)}, configError, manualOptions())
 	t.Cleanup(func() { _ = e.Close(context.Background()) })
 	return e
+}
+
+func TestEngineRejectsOverLimitHTTPComparisonBeforeReplacingCandidate(t *testing.T) {
+	valid := config.Empty()
+	valid.Probes["web"] = config.Probe{
+		Type:             "http",
+		Enabled:          true,
+		OnStartupUnknown: "wait",
+		OnError:          "retain",
+		GraceSeconds:     60,
+		IntervalMS:       100,
+		TimeoutMS:        20,
+		URL:              "http://localhost",
+		Value:            json.RawMessage("true"),
+	}
+	valid.Rules = []config.Rule{{ID: "web", Enabled: true, When: config.Expression{Probe: "web"}}}
+	if err := config.Validate(valid); err != nil {
+		t.Fatal(err)
+	}
+
+	power := &fakePower{}
+	writes := 0
+	options := manualOptions()
+	options.Configuration = valid
+	options.Resolve = func(probe config.Probe) model.Probe {
+		return alwaysActiveProbe{}
+	}
+	options.Save = func(config.Config) error {
+		writes++
+		return nil
+	}
+	e := engine.New(context.Background(), power, fixedClock{time.Unix(123, 0)}, "", options)
+	t.Cleanup(func() { _ = e.Close(context.Background()) })
+
+	var ready model.Snapshot
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var err error
+		ready, err = e.Snapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ready.Activity == model.Active && ready.Hold.Requested && ready.Hold.OSAccepted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("valid HTTP rule did not establish active hold: %+v", ready)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	before, err := e.Execute(context.Background(), model.Command{Operation: "mode", Mode: model.Awake, Duration: time.Hour})
+	if err != nil || before.Deadline == nil {
+		t.Fatalf("valid HTTP configuration did not establish manual deadline: %+v %v", before, err)
+	}
+	beforeConfig, err := e.ExportConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		value  json.RawMessage
+		mutate func(*config.Probe)
+	}{
+		{name: "malformed UTF-8", value: json.RawMessage([]byte{'"', 'b', 'a', 'd', 0xff, '"'})},
+		{name: "lone surrogate escape", value: json.RawMessage(`"\ud800"`)},
+		{name: "over-limit exponent", value: json.RawMessage("1e+" + strings.Repeat("0", config.MaxExponentDigits+1))},
+		{name: "malformed URL", mutate: func(probe *config.Probe) { probe.URL = "http://localhost/bad" + string([]byte{0xff}) }},
+		{name: "malformed pointer", mutate: func(probe *config.Probe) { probe.Pointer = "/bad" + string([]byte{0xff}) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := config.Clone(valid)
+			candidateProbe := candidate.Probes["web"]
+			if test.value != nil {
+				candidateProbe.Value = test.value
+			}
+			if test.mutate != nil {
+				test.mutate(&candidateProbe)
+			}
+			candidate.Probes["web"] = candidateProbe
+			if _, err := e.Execute(context.Background(), model.Command{Operation: "config", Configuration: &candidate}); err == nil {
+				t.Fatalf("invalid candidate was accepted: writes=%d", writes)
+			}
+			afterConfig, err := e.ExportConfig(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, err := e.Snapshot(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if writes != 0 || !bytes.Equal(beforeConfig, afterConfig) || !reflect.DeepEqual(before.Probes, after.Probes) || !reflect.DeepEqual(before.Rules, after.Rules) || before.Activity != after.Activity || !reflect.DeepEqual(before.Hold, after.Hold) || !reflect.DeepEqual(before.Deadline, after.Deadline) {
+				t.Fatalf("invalid candidate changed active configuration, observation, hold or deadline: writes=%d before=%+v after=%+v config_equal=%t", writes, before, after, bytes.Equal(beforeConfig, afterConfig))
+			}
+		})
+	}
 }
 
 func mode(t *testing.T, e *engine.Engine, m model.Mode) model.Snapshot {
@@ -883,6 +1226,65 @@ func TestStoreValidatesBeforeReplacing(t *testing.T) {
 	}
 	if _, err := config.Parse(bytes.NewReader(saved)); err != nil || writes != 1 {
 		t.Fatal("saved config is not a valid complete candidate")
+	}
+	invalidUTF8 := config.Empty()
+	invalidUTF8.Probes["web"] = config.Probe{
+		Type:             "http",
+		Enabled:          true,
+		OnStartupUnknown: "wait",
+		OnError:          "retain",
+		GraceSeconds:     60,
+		IntervalMS:       5000,
+		TimeoutMS:        2000,
+		URL:              "http://localhost",
+		Value:            json.RawMessage([]byte{'"', 'b', 'a', 'd', 0xff, '"'}),
+	}
+	priorWrites, priorSaved := writes, append([]byte(nil), saved...)
+	if err := store.Save(invalidUTF8); err == nil || writes != priorWrites || !bytes.Equal(saved, priorSaved) {
+		t.Fatalf("malformed UTF-8 candidate reached persistent storage: err=%v writes=%d", err, writes)
+	}
+	for _, invalidProbe := range []config.Probe{
+		{
+			Type:             "http",
+			Enabled:          true,
+			OnStartupUnknown: "wait",
+			OnError:          "retain",
+			GraceSeconds:     60,
+			IntervalMS:       5000,
+			TimeoutMS:        2000,
+			URL:              "http://localhost/bad" + string([]byte{0xff}),
+			Value:            json.RawMessage("true"),
+		},
+		{
+			Type:             "http",
+			Enabled:          true,
+			OnStartupUnknown: "wait",
+			OnError:          "retain",
+			GraceSeconds:     60,
+			IntervalMS:       5000,
+			TimeoutMS:        2000,
+			URL:              "http://localhost",
+			Pointer:          "/bad" + string([]byte{0xff}),
+			Value:            json.RawMessage("true"),
+		},
+		{
+			Type:             "http",
+			Enabled:          true,
+			OnStartupUnknown: "wait",
+			OnError:          "retain",
+			GraceSeconds:     60,
+			IntervalMS:       5000,
+			TimeoutMS:        2000,
+			URL:              "http://localhost",
+			Value:            json.RawMessage(`"prefix\ud800suffix"`),
+		},
+	} {
+		candidate := config.Empty()
+		candidate.Probes["web"] = invalidProbe
+		priorWrites, priorSaved := writes, append([]byte(nil), saved...)
+		if err := store.Save(candidate); err == nil || writes != priorWrites || !bytes.Equal(saved, priorSaved) {
+			t.Fatalf("malformed selector candidate reached persistent storage: err=%v writes=%d", err, writes)
+		}
 	}
 	store.Replace = func([]byte) error { return errors.New("disk failure") }
 	if err := store.Save(config.Empty()); err == nil {
