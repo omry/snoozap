@@ -3,19 +3,19 @@ artifact: swe-design-review-attestation
 schema_version: 5
 scope_key: 76349cc404595105c0e333cc57bba66f39f9f9c09573de7a2507933e516946ab
 scope: {"kind": "path", "primary_target": "design/implementation-plan.md", "repository": ".", "selector": "design/implementation-plan.md"}
-review_content_identity_sha256: e3059018192e962df168f58617141cb769d05bb8b878da960aa3c8472ffa1695
-target_content_identity_sha256: df0afa5ebdb8ef44904a71bb9daebc3de5afac478ff386652243eb7e3a72b4e5
+review_content_identity_sha256: 6db93c7807d363c16253fc1fd3c1c3dabab53a8a7855c8842334a5e74c446fd0
+target_content_identity_sha256: 8d716e9f1f52f54854c56a779e8ef66f51f04773cbb0674fde3ca0c5c8104393
 baseline_content_identity_sha256: 8a456abae8e20de59861c296b8c67cd2ccc31e1925b40b5dd886b6e28a3f13b0
-target_documents: [{"executable": false, "path": "design/implementation-plan.md", "repository": ".", "sha256": "6341084edb1825844bdb8f40bdd0515ad35159ed60d03018f9ebd4f08aa06957"}, {"executable": false, "path": "design/slices.json", "repository": ".", "sha256": "637430f7a2d104fce8445dfa54c7b359d9eb6e156dc1a25bf3a3afd07b4654df"}]
+target_documents: [{"executable": false, "path": "design/implementation-plan.md", "repository": ".", "sha256": "67ea681b4bc7943e770bdcdb496e77dda6ad53d970472db93a41d576633d428c"}, {"executable": false, "path": "design/slices.json", "repository": ".", "sha256": "97b7fd84bdd127812ea0c776343dd824c46906b014108741246ba753424cf79e"}]
 baseline_documents: [{"executable": false, "path": "design/high-level-design.md", "repository": ".", "sha256": "8906595a68f69aa9bfb9a744578e25e033add00612475a29710b9107bb3d0648"}, {"executable": false, "path": "design/requirements.md", "repository": ".", "sha256": "adb9cbecaaa4d7dee037f59284756fd54d73feb237257b67d4ad63a964f34e0e"}]
 design_dependency_documents: [{"executable": false, "path": "design/high-level-design.md", "repository": ".", "sha256": "8906595a68f69aa9bfb9a744578e25e033add00612475a29710b9107bb3d0648"}, {"executable": false, "path": "design/requirements.md", "repository": ".", "sha256": "adb9cbecaaa4d7dee037f59284756fd54d73feb237257b67d4ad63a964f34e0e"}]
-plan_binding: {"base_revision": "4fb7f69deb8f35e0d034ca96199309a188a932c8", "documents": [{"executable": false, "path": "design/implementation-plan.md", "plan_key": "snoozap", "sha256": "6341084edb1825844bdb8f40bdd0515ad35159ed60d03018f9ebd4f08aa06957", "slice_convention": "hierarchical-v1"}], "predecessors": [{"executable": false, "path": "design/implementation-plan.md", "sha256": "0ca822fab3b1239c6ae784487e15549e917cd24f6ae9a4e9e8209133b84f0de6"}]}
+plan_binding: {"base_revision": "6fc0a073d8f6009aae2e00b7996942e0e520ddab", "documents": [{"executable": false, "path": "design/implementation-plan.md", "plan_key": "snoozap", "sha256": "67ea681b4bc7943e770bdcdb496e77dda6ad53d970472db93a41d576633d428c", "slice_convention": "hierarchical-v1"}], "predecessors": [{"executable": false, "path": "design/implementation-plan.md", "sha256": "6341084edb1825844bdb8f40bdd0515ad35159ed60d03018f9ebd4f08aa06957"}]}
 document_repository: "."
 document_path: "design/implementation-plan.md"
-document_revision_provenance: "4fb7f69deb8f35e0d034ca96199309a188a932c8"
-document_sha256: 6341084edb1825844bdb8f40bdd0515ad35159ed60d03018f9ebd4f08aa06957
+document_revision_provenance: "6fc0a073d8f6009aae2e00b7996942e0e520ddab"
+document_sha256: 67ea681b4bc7943e770bdcdb496e77dda6ad53d970472db93a41d576633d428c
 verdict: clean
-attested_at: 2026-11-05T13:04:28Z
+attested_at: 2026-11-06T06:11:02Z
 ---
 <!-- swe-design-review-attestation:v5 -->
 
