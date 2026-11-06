@@ -335,7 +335,7 @@
     {
       "id": "snoozap/7",
       "parent": null,
-      "state": "planned",
+      "state": "replaced",
       "role": "implementation",
       "intent": {
         "title": "[snoozap/7] Expose direct Windows tray and status controls",
@@ -372,6 +372,85 @@
       }
     },
     {
+      "id": "snoozap/7.1",
+      "parent": "snoozap/7",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/7.1] Control Windows sleep from the native tray",
+        "responsibility": "Control awake, timed awake, Auto and Allow sleep directly from a native Windows tray menu with truthful selected-versus-accepted status and reasons\nReuse one Windows runtime and Service across console and tray, attach to an existing owner, prevent a second power request and release owned resources on Quit",
+        "paths": [
+          "cmd/snoozap-tray/main.go",
+          "internal/desktop/app.go",
+          "internal/desktop/tray.go",
+          "internal/app/windows.go",
+          "cmd/snoozap/main.go",
+          "go.mod",
+          "go.sum",
+          "tests/windows/tray_test.go"
+        ],
+        "dependencies": [
+          "snoozap/6.1"
+        ],
+        "acceptance": [
+          "Native tray mouse and keyboard commands agree with CLI under empty configuration, active work, unknown sources, timer replacement and expiry, battery cutoff and OS request failure",
+          "Console-owned and tray-owned starts, second launch, quit and disconnect preserve a single engine and balanced native requests; console builds exclude desktop dependencies"
+        ]
+      },
+      "display": {
+        "summary": "Direct native tray controls sharing the existing runtime",
+        "production": [
+          450,
+          650
+        ],
+        "tests": [
+          350,
+          550
+        ]
+      }
+    },
+    {
+      "id": "snoozap/7.2",
+      "parent": "snoozap/7",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/7.2] Show the bundled Windows status window",
+        "responsibility": "Present the selected UX status window using bundled trusted assets and the same Service commands, with close-to-hide, reopen/focus and accessible keyboard, contrast, scaling and theme behavior",
+        "paths": [
+          "internal/desktop/app.go",
+          "internal/desktop/tray.go",
+          "frontend/status.ts",
+          "frontend/styles.css",
+          "frontend/index.html",
+          "frontend/status.test.ts",
+          "frontend/assets.go",
+          "frontend/package.json",
+          "frontend/package-lock.json",
+          "frontend/tsconfig.json",
+          ".gitignore",
+          "tests/windows/tray_test.go"
+        ],
+        "dependencies": [
+          "snoozap/7.1"
+        ],
+        "acceptance": [
+          "Graphical controls agree with tray and CLI; close/reopen preserves engine and timer, repeated launch focuses; bundled content blocks external navigation and scripts; Windows focus, high contrast, scaling, themes and hidden-icon behavior use text as well as color"
+        ]
+      },
+      "display": {
+        "summary": "Accessible status window using the delivered tray and Service",
+        "production": [
+          400,
+          650
+        ],
+        "tests": [
+          350,
+          550
+        ]
+      }
+    },
+    {
       "id": "snoozap/8",
       "parent": null,
       "state": "planned",
@@ -390,7 +469,7 @@
           "tests/windows/setup_test.go"
         ],
         "dependencies": [
-          "snoozap/7"
+          "snoozap/7.2"
         ],
         "acceptance": [
           "First-run Add T3 and Add application create understandable enabled rules; cancellation/auth refusal leaves previous config and manual timer intact.",
