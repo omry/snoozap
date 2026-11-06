@@ -1,17 +1,17 @@
 ---
 plan_key: snoozap
 slice_convention: hierarchical-v1
-slice_inventory: {"executable": false, "path": "slices.json", "sha256": "637430f7a2d104fce8445dfa54c7b359d9eb6e156dc1a25bf3a3afd07b4654df"}
+slice_inventory: {"executable": false, "path": "slices.json", "sha256": "97b7fd84bdd127812ea0c776343dd824c46906b014108741246ba753424cf79e"}
 ---
 # SnooZap implementation plan
 
-Status: detailed planning draft with owner-approved architecture, selected UX
-and the WSL process-check lifecycle amendment. Final slice-plan approval and
-product implementation authority have not been obtained. Windows engineering
-can be reviewed as a concrete first delivery. The Mac closed-lid mechanism is
+Status: Windows delivery is owner-authorized under the original remote-review
+and PR-stack campaign. Changed slice definitions require reviewed admission, and
+completion requires their actual policy and native acceptance gates. The selected
+UX and WSL lifecycle decisions remain approved. The Mac closed-lid mechanism is
 explicitly owner-deferred; its dependent implementation and Mac completion are
 not ready. Linux follows complete Mac delivery. The whole project is not yet
-implementation ready.
+implementation ready. See the overview for delivery progress.
 
 Governing documents: [requirements](requirements.md) and
 [architecture](high-level-design.md). Pre-rename approval evidence is retained for their original reviewed bytes.
@@ -71,7 +71,8 @@ nor the TUI owns an independent copy of observations or holds.
 | `internal/desktop`, `frontend` | Wails tray/window and bundled UI; calls the local service |
 | `internal/tui` | Bubble Tea views/input; same service or attached IPC client |
 | `internal/wake`, `web/wake` | Separate optional discovery/WOL and wake-only listeners/page |
-| `cmd/snoozap`, `cmd/snoozap-tray`, `build`, `docs` | Composition, native entry points, reproducible packaging and shipped instructions |
+| `internal/app` | Shared Windows runtime composition extracted from the existing console entry point; uses engine, probes, platform and IPC, with no desktop imports |
+| `cmd/snoozap`, `cmd/snoozap-tray`, `build`, `docs` | Native entry points, reproducible packaging and shipped instructions |
 
 Define internal Go interfaces with these responsibilities. Concrete wire DTOs
 remain separate from OS handles and credentials:
@@ -247,6 +248,38 @@ navigation/popups/external script loading and open approved sign-in links throug
 the system browser after validation. Go callbacks/commands cross to Wails' UI
 thread using its supported dispatch. Snapshot subscriptions stop with the view.
 TUI output/input never blocks the engine or native shutdown.
+
+The tray is delivered first as native quick-menu controls, followed by the
+bundled status window. Both cuts use the existing Service and Windows owner;
+extract console startup and balanced cleanup once into `internal/app/windows.go`.
+Keep the console dependency graph free of Wails and webview packages. The tray
+attaches through the existing IPC when a console owns the runtime. Use Wails
+UI-instance activation only to open or focus its current-user tray/window; do
+not interpret second-instance arguments as Service commands or trust them as
+credentials. Native engine singleton and command authorization remain the
+existing Windows owner and IPC.
+
+Slice 7.1 is usable through its native menu: Stay awake, the 15-minute, 1-hour
+and 4-hour presets, Auto and Allow sleep. Until the window cut exists, primary
+click and repeated tray launch open that menu. Slice 7.2 completes the selected
+Open SnooZap and Custom… actions through the same bundled status window; do not
+build a second duration-entry form for the intermediate cut. Custom… opens or
+focuses the window's duration field. Accept the existing CLI/IPC positive duration
+syntax and Service bound. Invalid input keeps focus and shows
+an error; cancellation preserves the running mode and deadline. Submit one mode
+command only after valid confirmation, then render the returned snapshot.
+Check custom entry from both tray and window, cancellation, invalid and overflow
+input, replacement and expiry, including an attached console owner. Parent 7 is
+complete only after 7.2 passes these checks and the full parent acceptance.
+
+Compile the status TypeScript at build time using pinned development tooling in
+`frontend/package.json` and its lockfile. `frontend/assets.go` embeds the local
+HTML, CSS and generated status JavaScript. Generated frontend output and installed
+development dependencies are ignored build products and are regenerated for
+validation. Ship neither a Node server nor runtime access to development files.
+The native tray cut owns its runtime integration and lifecycle tests once; the
+status-window cut adds its view, bridge and accessibility checks. Reused runtime
+code moved out of the console is not counted again as new delivered foundation.
 
 ## Probe-specific engineering
 
@@ -496,7 +529,7 @@ dependencies and disposable probes. Do not use added-plus-removed edit churn.
 Shared foundations/tests are counted once in their owning Windows prerequisite.
 Every canonical slice has separate inclusive production/test line ranges.
 
-Project envelope: **10,850–17,450 production lines** and **12,000–19,400 test
+Project envelope: **11,050–17,750 production lines** and **12,200–19,700 test
 lines**. This includes a conditional Mac closed-lid envelope of 800–1,600 production
 and 900–1,800 test lines, not a chosen mechanism or a ready implementation task.
 The design investigation counts zero shipped/test code because it delivers
@@ -504,8 +537,9 @@ planning evidence. Estimates have greenfield and native/hardware uncertainty;
 real evidence can require an affected reviewed replan. There is no agreed global
 slice cap, time estimate or new accounting mechanism.
 
-Windows slices 1–12 are detailed for review, subject to their explicit engineering
-and physical acceptance prerequisites. Product execution remains unauthorized.
+Windows slices 1–12 are authorized for delivery under the retained campaign,
+subject to their explicit engineering, current review and physical acceptance
+prerequisites. This authority does not permit merge or release.
 Slice 13 requires completed Windows and real Mac access. Slices 15–16 are not ready
 until the retained Mac mechanism decision, updated engineering and renewed affected
 review/approval exist. Linux slices 17–18 depend on complete Mac delivery. The
