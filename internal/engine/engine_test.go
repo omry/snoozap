@@ -24,6 +24,300 @@ type fakeClock struct {
 
 	sleep time.Duration
 }
+
+func TestHistoryRecordsBackgroundCallsWithoutControlInput(t *testing.T) {
+	r := newRig(t, processConfig(t, "retain"), func(config.Probe) model.Probe {
+		return probeFunc(func(context.Context) model.Observation {
+			return model.Observation{State: model.Active, StatusCode: 200}
+		})
+	})
+	r.until(t, func(s model.Snapshot) bool { return s.Activity == model.Active && s.Probes[0].ObservedAt != nil })
+	if err := r.engine.ClearHistory(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	r.clock.advance(time.Second)
+	r.until(t, func(s model.Snapshot) bool {
+		return s.Probes[0].ObservedAt != nil && s.Probes[0].ObservedAt.Equal(r.clock.Now())
+	})
+	h, err := r.engine.History(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	for _, v := range h.Records {
+		if v.Operation == "probe" {
+			calls++
+			if v.ProbeID != "app" || v.Result != "active" || v.StatusCode != 200 {
+				t.Fatal(v)
+			}
+		}
+	}
+	if calls != 1 {
+		t.Fatal("background completion not recorded once", h)
+	}
+	before := r.status(t)
+	h.Records[0].Result = "caller-change"
+	for range 20 {
+		if _, err := r.engine.History(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after := r.status(t)
+	if before.Sequence != after.Sequence || before.NativeRequestAccepted != after.NativeRequestAccepted {
+		t.Fatal("history reads changed owner")
+	}
+	newHistory, _ := r.engine.History(context.Background())
+	for _, v := range newHistory.Records {
+		if v.Result == "caller-change" {
+			t.Fatal("history aliases owner")
+		}
+	}
+}
+
+func TestHistorySanitizesAdapterFailuresAndTimeouts(t *testing.T) {
+	secret := "token=private-secret\x1b[2J"
+	r := newRig(t, processConfig(t, "retain"), func(config.Probe) model.Probe {
+		return probeFunc(func(context.Context) model.Observation {
+			return model.Observation{State: model.Unknown, ErrorCode: secret, StatusCode: 1000}
+		})
+	})
+	r.until(t, func(s model.Snapshot) bool { return s.Probes[0].ObservedAt != nil })
+	h, err := r.engine.History(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, v := range h.Records {
+		if v.Operation == "probe" {
+			found = true
+			if v.Result != "unavailable" || v.StatusCode != 0 {
+				t.Fatal(v)
+			}
+		}
+		if strings.Contains(v.Result, "private") {
+			t.Fatal("raw adapter error retained")
+		}
+	}
+	if !found {
+		t.Fatal("failed call missing")
+	}
+	entered := make(chan struct{}, 1)
+	r2 := newRig(t, processConfig(t, "retain"), func(config.Probe) model.Probe {
+		return probeFunc(func(ctx context.Context) model.Observation {
+			entered <- struct{}{}
+			<-ctx.Done()
+			return model.Observation{State: model.Unknown}
+		})
+	})
+	waitCheck(t, entered)
+	r2.clock.advance(100 * time.Millisecond)
+	r2.until(t, func(s model.Snapshot) bool {
+		return s.Probes[0].ErrorCode == "timeout" && s.Probes[0].ObservedAt != nil
+	})
+	h, err = r2.engine.History(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, v := range h.Records {
+		if v.Operation == "probe" {
+			count++
+			if v.Result != "timeout" || v.DurationMS != 100 {
+				t.Fatal("wrong timeout history", v)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatal("timeout not recorded exactly once", h)
+	}
+}
+
+func TestStartupHoldRecordsInitialTransitions(t *testing.T) {
+	cfg := parse(t, `{"schema_version":1,"probes":{"work":{"type":"process","name":"work.exe","on_startup_unknown":"hold"}},"rules":[{"id":"work","when":{"probe":"work"}}]}`)
+	r := newRig(t, cfg, func(config.Probe) model.Probe {
+		return probeFunc(func(ctx context.Context) model.Observation {
+			<-ctx.Done()
+			return model.Observation{State: model.Unknown}
+		})
+	})
+	s := r.status(t)
+	if !s.DesiredHold || !s.NativeRequestAccepted {
+		t.Fatalf("startup hold was not acquired: %+v", s)
+	}
+	h, err := r.engine.History(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hold, native := 0, 0
+	for _, record := range h.Records {
+		switch {
+		case record.Operation == "hold" && record.Result == "requested":
+			hold++
+		case record.Operation == "native" && record.Result == "accepted":
+			native++
+		}
+	}
+	if hold != 1 || native != 1 {
+		t.Fatalf("startup transitions were not recorded once: hold=%d native=%d history=%+v", hold, native, h.Records)
+	}
+}
+
+func TestStartupNativeFailureRecordsSanitizedRejection(t *testing.T) {
+	cfg := parse(t, `{"schema_version":1,"probes":{"work":{"type":"process","name":"work.exe","on_startup_unknown":"hold"}},"rules":[{"id":"work","when":{"probe":"work"}}]}`)
+	clock := newClock()
+	backend := &fakeBackend{fail: 1}
+	e := New(context.Background(), backend, clock, "", Options{
+		Configuration: cfg,
+		ReadPower: func(context.Context) (model.Battery, error) {
+			return model.Battery{Known: true, Source: "ac"}, nil
+		},
+		Resolve: func(config.Probe) model.Probe {
+			return probeFunc(func(ctx context.Context) model.Observation {
+				<-ctx.Done()
+				return model.Observation{State: model.Unknown}
+			})
+		},
+	})
+	defer e.Close(context.Background())
+	s, err := e.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.DesiredHold || s.NativeRequestAccepted || s.NativeError != "Windows power request failed" {
+		t.Fatalf("startup native rejection was not preserved: %+v", s)
+	}
+	if got := backend.count(); got != 1 {
+		t.Fatalf("startup rejection made unexpected native calls: %d", got)
+	}
+	h, err := e.History(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, record := range h.Records {
+		if record.Operation != "native" {
+			continue
+		}
+		if record.Result != "rejected" {
+			t.Fatalf("native failure was not sanitized: %+v", record)
+		}
+		found++
+	}
+	if found != 1 {
+		t.Fatalf("startup native rejection was not recorded once: %+v", h.Records)
+	}
+}
+
+func TestStartupWaitDoesNotClaimOrDuplicate(t *testing.T) {
+	cfg := parse(t, `{"schema_version":1,"probes":{"work":{"type":"process","name":"work.exe"}},"rules":[{"id":"work","when":{"probe":"work"}}]}`)
+	clock := newClock()
+	backend := &fakeBackend{}
+	e := New(context.Background(), backend, clock, "", Options{
+		Configuration: cfg,
+		ReadPower: func(context.Context) (model.Battery, error) {
+			return model.Battery{Known: true, Source: "ac"}, nil
+		},
+		Resolve: func(config.Probe) model.Probe {
+			return probeFunc(func(ctx context.Context) model.Observation {
+				<-ctx.Done()
+				return model.Observation{State: model.Unknown}
+			})
+		},
+	})
+	defer e.Close(context.Background())
+	s, err := e.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.DesiredHold || s.NativeRequestActive || s.NativeRequestAccepted {
+		t.Fatalf("default startup wait claimed a hold: %+v", s)
+	}
+	for range 20 {
+		if _, err := e.Snapshot(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.History(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h, err := e.History(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Records) != 0 || backend.count() != 0 {
+		t.Fatalf("default startup wait produced duplicate state: calls=%d history=%+v", backend.count(), h.Records)
+	}
+}
+
+func TestHistoryQueriesAndExportPreserveManualTimer(t *testing.T) {
+	r := newRig(t, config.Empty(), nil)
+	before := r.command(t, model.Command{Operation: "mode", Mode: model.Awake, Duration: time.Hour})
+	data, err := r.engine.ExportConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Parse(strings.NewReader(string(data)))
+	if err != nil || !cfg.Settings.Monitoring {
+		t.Fatal(err)
+	}
+	if err := r.engine.ClearHistory(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h, err := r.engine.History(context.Background())
+	if err != nil || len(h.Records) != 0 {
+		t.Fatal("clear failed", err, h)
+	}
+	after := r.status(t)
+	if before.Sequence != after.Sequence || !after.Deadline.Equal(*before.Deadline) || !after.NativeRequestAccepted {
+		t.Fatal("diagnostics changed manual timer")
+	}
+	cfg.SchemaVersion = 2
+	if _, err := r.engine.Execute(context.Background(), model.Command{Operation: "config", Configuration: &cfg}); err == nil {
+		t.Fatal("invalid config accepted")
+	}
+	h, _ = r.engine.History(context.Background())
+	if len(h.Records) != 1 || h.Records[0].Operation != "config" || h.Records[0].Result != "rejected" {
+		t.Fatal("rejected write missing", h)
+	}
+	if !r.status(t).NativeRequestAccepted {
+		t.Fatal("invalid edit changed active hold")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := r.engine.History(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if err := r.engine.ClearHistory(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if _, err := r.engine.ExportConfig(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if err := r.engine.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.engine.History(context.Background()); !errors.Is(err, model.ErrStopped) {
+		t.Fatal(err)
+	}
+	if err := r.engine.ClearHistory(context.Background()); !errors.Is(err, model.ErrStopped) {
+		t.Fatal(err)
+	}
+	if _, err := r.engine.ExportConfig(context.Background()); !errors.Is(err, model.ErrStopped) {
+		t.Fatal(err)
+	}
+}
+
+func TestObsoleteObservationCannotEnterCurrentHistory(t *testing.T) {
+	clock := newClock()
+	job := &poll{id: "old", generation: 1, epoch: 1, cancel: func() {}}
+	l := &loop{clock: clock, generation: 2, epoch: 2, jobs: map[string]*poll{"old": job}, probes: map[string]*probeState{"old": {state: model.Unknown}}}
+	l.snapshot.Monitoring = true
+	l.receive(result{job: job, observation: model.Observation{State: model.Active}}, clock.Elapsed())
+	if len(l.history.Snapshot().Records) != 0 {
+		t.Fatal("obsolete call entered new-generation history")
+	}
+}
+
 type fakeTimer struct {
 	clock   *fakeClock
 	channel chan time.Time
