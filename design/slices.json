@@ -178,7 +178,7 @@
     {
       "id": "snoozap/5",
       "parent": null,
-      "state": "planned",
+      "state": "replaced",
       "role": "implementation",
       "intent": {
         "title": "[snoozap/5] Read authorized local T3 and WSL activity",
@@ -191,6 +191,49 @@
           "internal/probe/process/process.go",
           "internal/probe/t3/client_test.go",
           "tests/windows/t3_wsl_test.go"
+        ],
+        "dependencies": [
+          "snoozap/4"
+        ],
+        "acceptance": [
+          "A separately authorized Windows client signs in, observes local running/waiting/transitional/child work and excludes settled and remote-environment work.",
+          "Pagination cannot turn a truncated response into confirmed idle; revocation, expiry, timeout and schema failure yield sanitized unknown.",
+          "Native/WSL port collisions and multiple local environments fail safely or bind the verified intended endpoint; fixed process arguments cannot run user commands. Stopped/missing/unreadable preflight launches no inspection command and reports unknown. A controlled stop after running preflight may restart the selected distro; no automatic termination occurs and the setup/settings explanation discloses this accepted limitation."
+        ]
+      },
+      "display": {
+        "summary": "T3 OAuth and local Windows/WSL probes",
+        "production": [
+          1000,
+          1500
+        ],
+        "tests": [
+          1000,
+          1600
+        ]
+      }
+    },
+    {
+      "id": "snoozap/5.1",
+      "parent": "snoozap/5",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/5.1] Read authorized local T3 and WSL activity",
+        "responsibility": "Implement external read-only T3 MCP login, local environment registry, OS-stored credential refs, paging and supported activity filters. Validate endpoint identity/locality from Windows for both native and already-running local WSL environments. Include child agents across all projects; no thread content needed. Add fixed WSL current-user process checks with a running-state preflight before each inspection command. Skip execution and report unknown for stopped, missing or unreadable state. Accept the owner-approved stop-after-preflight restart race; disclose it during WSL application selection/settings and never automatically terminate a distribution. No user command templates, resident WSL helper or private COM dependency. Reuse shared observation/error/history contracts. First prove SDK OAuth plus Windows/WSL identity in a disposable test; a failure invalidating the selected integration returns to HLD before dependent work.",
+        "paths": [
+          "internal/probe/t3/client.go",
+          "internal/probe/t3/oauth.go",
+          "internal/probe/t3/locality.go",
+          "internal/platform/windows/wsl.go",
+          "internal/probe/process/process.go",
+          "internal/probe/t3/client_test.go",
+          "tests/windows/t3_wsl_test.go",
+          "cmd/snoozap/main.go",
+          "go.mod",
+          "go.sum",
+          "internal/config/config.go",
+          "internal/config/config_test.go"
         ],
         "dependencies": [
           "snoozap/4"
@@ -229,7 +272,7 @@
           "internal/probe/registry_test.go"
         ],
         "dependencies": [
-          "snoozap/5"
+          "snoozap/5.1"
         ],
         "acceptance": [
           "Every HTTP operator, JSON type mismatch, exists absence, malformed JSON, timeout and 1 MiB limit follows the HLD.",
