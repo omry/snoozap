@@ -1,7 +1,7 @@
 ---
 plan_key: snoozap
 slice_convention: hierarchical-v1
-slice_inventory: {"executable": false, "path": "slices.json", "sha256": "97b7fd84bdd127812ea0c776343dd824c46906b014108741246ba753424cf79e"}
+slice_inventory: {"executable": false, "path": "slices.json", "sha256": "b1a9ad4886755779df73ec79f23883973c216f3d98354be630219704152dfa99"}
 ---
 # SnooZap implementation plan
 
@@ -496,6 +496,43 @@ drivers are opt-in and must not change firmware, sleep policy or global network
 settings. Physical sleep/auth/credential/network evidence is required in addition
 to mocks and source inspection.
 
+### Continuous integration before the next desktop slice
+
+Owner-requested slice `snoozap/19` runs immediately after 7.1 and before 7.2.
+Its unused ID preserves every existing slice ID and intent; execution follows
+the canonical inventory order, not numeric sorting. The CI slice depends on
+7.1. It adds engineering checks for the existing source on all three systems;
+it does not begin the Mac or Linux product phases or change their prerequisites.
+
+Use one GitHub Actions workflow with native hosted Windows, macOS and Linux
+jobs on pull requests and pushes, without path filters. Read the exact Go
+version from `go.mod`; do not select a floating Go version or silently upgrade
+module dependencies. Pin external actions to full commit hashes. Give the
+workflow only `contents: read`, disable persisted checkout credentials, use no
+repository secrets, and use `pull_request` rather than a privileged PR trigger.
+Set finite job timeouts and keep the other platform jobs running when one fails.
+Use stable platform check names and record them in `docs/ci.md`; this slice does
+not change branch protection or other repository settings.
+
+On each OS, check Go formatting, `go mod verify`, `go vet ./...`, ordinary
+`go test ./...` and `go build ./...` against the platform's actual build
+constraints. Run race-enabled tests on supported runner/Go targets and document
+the exact matrix. Windows additionally builds the console and tray commands
+separately, including the tray's Windows GUI linker setting. Keep existing
+native-acceptance and live-service opt-ins disabled. Do not turn a command
+failure into success, accept dependency drift, or treat a skipped package as
+coverage of an absent platform port. Validate workflow syntax, trigger and
+permission contracts; demonstrate that command failure makes the job fail.
+Retain actual successful runs on all three runner systems before accepting the
+slice, and provide the equivalent local commands and the observed exclusions.
+
+Hosted CI does not replace native tray interaction, selected WSL integration,
+live authentication, sleep/lid/battery/network hardware checks or the current
+7.1 acceptance failures. Those keep their existing explicit acceptance gates.
+No release artifacts, deployment or product support claim comes from this slice.
+The workflow and CI-only configuration count as test lines; local operator
+instructions count as production lines under the existing estimate convention.
+
 | Parent obligation | Owning slices and integrated acceptance |
 | --- | --- |
 | Requirements 1–2: activity requests/releases sleep prevention | 1–4 own state/controller/native request; 12 proves actual Windows idle/lock/display behavior; 16 and 18 prove ports |
@@ -529,7 +566,7 @@ dependencies and disposable probes. Do not use added-plus-removed edit churn.
 Shared foundations/tests are counted once in their owning Windows prerequisite.
 Every canonical slice has separate inclusive production/test line ranges.
 
-Project envelope: **11,050–17,750 production lines** and **12,200–19,700 test
+Project envelope: **11,080–17,810 production lines** and **12,300–19,880 test
 lines**. This includes a conditional Mac closed-lid envelope of 800–1,600 production
 and 900–1,800 test lines, not a chosen mechanism or a ready implementation task.
 The design investigation counts zero shipped/test code because it delivers
@@ -537,7 +574,8 @@ planning evidence. Estimates have greenfield and native/hardware uncertainty;
 real evidence can require an affected reviewed replan. There is no agreed global
 slice cap, time estimate or new accounting mechanism.
 
-Windows slices 1–12 are authorized for delivery under the retained campaign,
+Windows slices 1–12 and the intervening CI slice 19 are authorized for delivery
+under the retained campaign,
 subject to their explicit engineering, current review and physical acceptance
 prerequisites. This authority does not permit merge or release.
 Slice 13 requires completed Windows and real Mac access. Slices 15–16 are not ready
