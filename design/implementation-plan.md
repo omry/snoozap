@@ -1,7 +1,7 @@
 ---
 plan_key: snoozap
 slice_convention: hierarchical-v1
-slice_inventory: {"executable": false, "path": "slices.json", "sha256": "adb82257af1f189462771754746057510c3d2b81ff753d00e8ef43bb63170ceb"}
+slice_inventory: {"executable": false, "path": "slices.json", "sha256": "637430f7a2d104fce8445dfa54c7b359d9eb6e156dc1a25bf3a3afd07b4654df"}
 ---
 # SnooZap implementation plan
 
@@ -300,6 +300,11 @@ Pin the verified T3 tool schema in adapter contract fixtures. Revocation, expiry
 unreachable transport and unknown schema report bounded unknown. Do not auto
 request stronger permissions or prompt repeatedly while polling. Reconnect is an
 explicit user setup action. A live MCP connection does not itself prove activity.
+
+Slice 6.1 retains Slice 6's HTTP/power behavior and acceptance with explicit
+configuration, Windows composition and native acceptance ownership. It replaces
+the inline probe resolver with the built-in registry while reusing the existing
+engine scheduler and native power/process/T3 adapters.
 
 **HTTP.** Validate every actual TCP destination as loopback using a custom dialer;
 disable environment proxies and redirects. Resolve localhost explicitly and
