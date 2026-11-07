@@ -34,6 +34,49 @@ func TestEmptyConfigurationNeverCreatesWork(t *testing.T) {
 	}
 }
 
+func TestT3ReferencesAndWSLSelectors(t *testing.T) {
+	for _, probe := range []string{
+		`{"type":"t3","local_environment":"selected-local"}`,
+		`{"type":"process","name":"renderer","wsl_distribution":"Ubuntu-24.04"}`,
+		`{"type":"process","executable":"/opt/my app/renderer","wsl_distribution":"Ubuntu-24.04"}`,
+	} {
+		input := `{"schema_version":1,"probes":{"work":` + probe + `},"rules":[{"id":"work","when":{"probe":"work"}}]}`
+		cfg, err := config.Parse(strings.NewReader(input))
+		if err != nil {
+			t.Fatal(input, err)
+		}
+		exported, err := config.Export(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = config.Parse(bytes.NewReader(exported)); err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(exported, []byte("endpoint")) || bytes.Contains(exported, []byte("credential_ref")) || bytes.Contains(exported, []byte("access_token")) {
+			t.Fatal("machine-local binding or credentials exported")
+		}
+	}
+	for _, probe := range []string{
+		`{"type":"t3"}`, `{"type":"t3","local_environment":"../other"}`,
+		`{"type":"t3","local_environment":"local","name":"app"}`,
+		`{"type":"t3","local_environment":"local","wsl_distribution":"Ubuntu"}`,
+		`{"type":"t3","local_environment":"local","source":"ac"}`,
+		`{"type":"t3","local_environment":"local","url":"http://localhost:3773/mcp"}`,
+		`{"type":"t3","local_environment":"local","token":"secret"}`,
+		`{"type":"process","name":"app","local_environment":"local"}`,
+		`{"type":"process","executable":"relative/path","wsl_distribution":"Ubuntu"}`,
+		`{"type":"process","executable":"C:\\app.exe","wsl_distribution":"Ubuntu"}`,
+		`{"type":"process","name":"app","wsl_distribution":"-bad"}`,
+		`{"type":"process","name":"app","wsl_distribution":"bad\nname"}`,
+		`{"type":"power","source":"ac","wsl_distribution":"Ubuntu"}`,
+		`{"type":"power","source":"ac","local_environment":"local"}`,
+	} {
+		if _, err := config.Parse(strings.NewReader(`{"schema_version":1,"probes":{"work":` + probe + `}}`)); err == nil {
+			t.Fatal("accepted incompatible or secret-bearing fields", probe)
+		}
+	}
+}
+
 func TestPortableExportUsesOnlyValidatedConfiguration(t *testing.T) {
 	c := config.Empty()
 	data, err := config.Export(c)
