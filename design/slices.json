@@ -445,7 +445,7 @@
     {
       "id": "snoozap/7.2",
       "parent": "snoozap/7",
-      "state": "planned",
+      "state": "replaced",
       "role": "implementation",
       "intent": {
         "title": "[snoozap/7.2] Show the bundled Windows status window",
@@ -484,6 +484,51 @@
       }
     },
     {
+      "id": "snoozap/7.2.1",
+      "parent": "snoozap/7.2",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/7.2.1] Show the isolated bundled Windows status window",
+        "responsibility": "Present the selected UX status window through stock Wails and the existing Service, with exact-origin Go bridge and private-data isolation, close-to-hide, reopen/focus, accessible keyboard/contrast/scaling/theme behavior, and reproducible frontend CI builds. Host-enforced navigation and popup rejection is explicitly deferred; adopt stronger stock Wails restrictions once a suitable release is qualified.",
+        "paths": [
+          "internal/desktop/app.go",
+          "internal/desktop/tray.go",
+          "frontend/status.ts",
+          "frontend/styles.css",
+          "frontend/index.html",
+          "frontend/status.test.ts",
+          "frontend/assets.go",
+          "frontend/package.json",
+          "frontend/package-lock.json",
+          "frontend/tsconfig.json",
+          ".gitignore",
+          "tests/windows/tray_test.go",
+          ".github/workflows/ci.yml"
+        ],
+        "dependencies": [
+          "snoozap/7.1"
+        ],
+        "acceptance": [
+          "Graphical controls agree with tray and CLI; close/reopen preserves engine and timer, repeated launch focuses; Windows focus, high contrast, scaling, themes and hidden-icon behavior use text as well as color.",
+          "Tray and window Custom entry accept existing positive duration syntax and Service bounds; invalid, overflow or cancelled input preserves mode and deadline; valid confirmation sends one command, including with an attached console owner.",
+          "Only the exact bundled app origin can call fixed typed Go methods or obtain private snapshots. Native Windows tests prove legitimate requests work while external GET, simple POST, frame and navigated-page requests are denied; private host-to-page delivery cannot leak after navigation. CSP and safe text rendering prevent external scripts and executable labels. Host-enforced navigation/popup rejection is an owner-approved future hardening obligation, not a claimed property of stock Wails3.1.0.",
+          "A clean checkout installs pinned frontend development tooling through its lockfile and generates ignored assets before Go checks/builds. Windows, macOS and Linux CI include frontend compile/tests before Go validation; no Node server or development files are required at runtime."
+        ]
+      },
+      "display": {
+        "summary": "Accessible status window with exact-origin Service isolation",
+        "production": [
+          450,
+          750
+        ],
+        "tests": [
+          450,
+          750
+        ]
+      }
+    },
+    {
       "id": "snoozap/8",
       "parent": null,
       "state": "planned",
@@ -502,7 +547,7 @@
           "tests/windows/setup_test.go"
         ],
         "dependencies": [
-          "snoozap/7.2"
+          "snoozap/7.2.1"
         ],
         "acceptance": [
           "First-run Add T3 and Add application create understandable enabled rules; cancellation/auth refusal leaves previous config and manual timer intact.",

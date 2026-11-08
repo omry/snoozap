@@ -1,7 +1,7 @@
 ---
 plan_key: snoozap
 slice_convention: hierarchical-v1
-slice_inventory: {"executable": false, "path": "slices.json", "sha256": "b1a9ad4886755779df73ec79f23883973c216f3d98354be630219704152dfa99"}
+slice_inventory: {"executable": false, "path": "slices.json", "sha256": "f1b4f24f69bc04e09aacc594f2c97f0edba3c76a951bdfefb740ec4a160a3a9e"}
 ---
 # SnooZap implementation plan
 
@@ -243,11 +243,40 @@ A version mismatch gives an upgrade message and never starts a competing owner.
 
 The desktop owner can call Service directly; when a headless owner already exists
 it uses the same restricted IPC. Wails exposes only the fixed local bridge methods,
-not arbitrary file reads, shell or network dispatch. Bundle trusted assets; block
-navigation/popups/external script loading and open approved sign-in links through
-the system browser after validation. Go callbacks/commands cross to Wails' UI
-thread using its supported dispatch. Snapshot subscriptions stop with the view.
+not arbitrary file reads, shell or network dispatch. Bundle trusted assets and
+load scripts, styles and other resources only from the app's exact origin.
+The owner accepted an application-level isolation boundary for stock Wails
+v3.1.0 after native Windows probes demonstrated both cross-origin bridge access
+and an effective supported middleware guard. On Windows the trusted origin is
+exactly `http://wails.localhost` (default HTTP port); arbitrary localhost names,
+ports, `file:` and opaque origins are not trusted. Before every privileged
+request, require the expected origin, method, route and typed operation; reject
+missing or different origins and cross-origin simple requests before dispatch.
+Do not rely on CORS response filtering, browser Fetch Metadata headers, a
+window ID or a JavaScript navigation handler as authorization. Expose only the
+fixed local Service bridge; validate arguments in Go. Render external labels
+and diagnostic text as text, never executable HTML. Use a restrictive CSP.
+
+Private snapshots must be returned only to authorized requests. Do not push
+private state through `ExecJS` or broadcast events into a window that may have
+navigated; use guarded view requests against the existing Controller snapshot.
+Avoid automatic replay of an uncertain mutation. Open approved sign-in links
+through the system browser after validation. Go callbacks/commands cross to
+Wails' UI thread using its supported dispatch. View requests stop with the view.
 TUI output/input never blocks the engine or native shutdown.
+
+Host-enforced navigation and popup rejection is explicitly deferred hardening.
+Best-effort prevention of links, forms, popups and file/URL drops remains useful,
+but does not establish a native veto. A navigated external document may still
+replace or imitate the UI; it must not gain Service access or private state.
+Native acceptance must prove legitimate commands still work and external GET,
+simple POST, frame and navigated-page requests cannot call the bridge or obtain
+private snapshots. Review host-to-page data delivery separately from RPC.
+
+- [ ] When a suitable stock Wails release provides stronger navigation/popup
+  restrictions, adopt and validate them on each delivered platform. Retain the
+  exact-origin Service boundary; remove redundant best-effort handlers when
+  the native policy covers their invariant. No fork is part of this decision.
 
 The tray is delivered first as native quick-menu controls, followed by the
 bundled status window. Both cuts use the existing Service and Windows owner;
@@ -261,7 +290,8 @@ existing Windows owner and IPC.
 
 Slice 7.1 is usable through its native menu: Stay awake, the 15-minute, 1-hour
 and 4-hour presets, Auto and Allow sleep. Until the window cut exists, primary
-click and repeated tray launch open that menu. Slice 7.2 completes the selected
+click and repeated tray launch open that menu. The revised status-window leaf
+7.2.1 replaces the original unimplemented 7.2 contract and completes the selected
 Open SnooZap and Custom… actions through the same bundled status window; do not
 build a second duration-entry form for the intermediate cut. Custom… opens or
 focuses the window's duration field. Accept the existing CLI/IPC positive duration
@@ -270,13 +300,19 @@ an error; cancellation preserves the running mode and deadline. Submit one mode
 command only after valid confirmation, then render the returned snapshot.
 Check custom entry from both tray and window, cancellation, invalid and overflow
 input, replacement and expiry, including an attached console owner. Parent 7 is
-complete only after 7.2 passes these checks and the full parent acceptance.
+complete only after 7.2.1 passes these checks and the full parent acceptance,
+with host navigation enforcement deferred under the explicit decision above.
 
 Compile the status TypeScript at build time using pinned development tooling in
 `frontend/package.json` and its lockfile. `frontend/assets.go` embeds the local
 HTML, CSS and generated status JavaScript. Generated frontend output and installed
 development dependencies are ignored build products and are regenerated for
 validation. Ship neither a Node server nor runtime access to development files.
+The status-window slice also owns the necessary CI frontend integration:
+use an exact Node/tooling version, immutable setup-action pin and lockfile-based
+install, then compile and test the frontend before Go formatting, vet, tests
+and builds on all three CI platforms. Retain a clean-checkout build check so
+ignored generated assets cannot mask a missing build prerequisite.
 The native tray cut owns its runtime integration and lifecycle tests once; the
 status-window cut adds its view, bridge and accessibility checks. Reused runtime
 code moved out of the console is not counted again as new delivered foundation.
@@ -498,7 +534,7 @@ to mocks and source inspection.
 
 ### Continuous integration before the next desktop slice
 
-Owner-requested slice `snoozap/19` runs immediately after 7.1 and before 7.2.
+Owner-requested slice `snoozap/19` runs immediately after 7.1 and before the status-window leaf.
 Its unused ID preserves every existing slice ID and intent; execution follows
 the canonical inventory order, not numeric sorting. The CI slice depends on
 7.1. It adds engineering checks for the existing source on all three systems;
@@ -566,7 +602,7 @@ dependencies and disposable probes. Do not use added-plus-removed edit churn.
 Shared foundations/tests are counted once in their owning Windows prerequisite.
 Every canonical slice has separate inclusive production/test line ranges.
 
-Project envelope: **11,080–17,810 production lines** and **12,300–19,880 test
+Project envelope: **11,130–17,910 production lines** and **12,400–20,080 test
 lines**. This includes a conditional Mac closed-lid envelope of 800–1,600 production
 and 900–1,800 test lines, not a chosen mechanism or a ready implementation task.
 The design investigation counts zero shipped/test code because it delivers
