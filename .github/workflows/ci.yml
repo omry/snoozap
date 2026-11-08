@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: CI / ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Windows
+            runner: windows-2025
+          - platform: macOS
+            runner: macos-15
+          - platform: Linux
+            runner: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      CGO_ENABLED: "1"
+      SNOOZAP_NATIVE_ACCEPTANCE: "0"
+    steps:
+      - name: Preserve repository line endings
+        run: git config --global core.autocrlf false
+
+      - name: Check out the change
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up the exact Go version
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          cache: false
+
+      - name: Verify toolchain and platform
+        run: |
+          expected=$(awk '$1 == "go" {print $2}' go.mod)
+          test "$(go env GOVERSION)" = "go${expected}"
+          go version
+          go env GOOS GOARCH CGO_ENABLED
+          gcc --version
+
+      - name: Check Go formatting
+        run: |
+          unformatted=$(git ls-files -z -- '*.go' | xargs -0 gofmt -l)
+          if [[ -n "$unformatted" ]]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test -count=1 -timeout=5m ./...
+
+      - name: Race tests
+        run: go test -race -count=1 -timeout=5m ./...
+
+      - name: Build current platform packages
+        run: go build ./...
+
+      - name: Build Windows console
+        if: runner.os == 'Windows'
+        run: go build -tags=production -o "$RUNNER_TEMP/snoozap.exe" ./cmd/snoozap
+
+      - name: Build Windows tray
+        if: runner.os == 'Windows'
+        run: go build -tags=production -ldflags='-H windowsgui' -o "$RUNNER_TEMP/snoozap-tray.exe" ./cmd/snoozap-tray
+
+      - name: Reject module file changes
+        run: git diff --exit-code -- go.mod go.sum
