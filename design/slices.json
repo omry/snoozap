@@ -410,6 +410,39 @@
       }
     },
     {
+      "id": "snoozap/19",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/19] Check every change on Windows, macOS and Linux in CI",
+        "responsibility": "Add GitHub Actions continuous integration for the existing Go project on native hosted Windows, macOS and Linux runners. Run shared build, unit test, vet, formatting and module-integrity checks, supported race checks, and separate Windows console and tray builds. Report each platform result against the reviewed change with reproducible local commands and explicit exclusions for opt-in native, GUI, WSL and physical acceptance. Reuse current Go module pins and build constraints. This is engineering validation of the current source, not implementation of the future Mac or Linux product ports. Do not publish releases or change repository protection settings.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "docs/ci.md"
+        ],
+        "dependencies": [
+          "snoozap/7.1"
+        ],
+        "acceptance": [
+          "Pull requests and pushes run visible Windows, macOS and Linux CI jobs using the exact Go version from go.mod; all three jobs pass on the slice candidate and retain command results.",
+          "CI checks formatting, module integrity, go vet, ordinary unit tests and builds on each OS, supported race tests, and distinct Windows console and tray executables; a failing required command fails its job instead of being masked.",
+          "Workflow validation confirms triggers, three-platform coverage, bounded jobs, read-only permissions and immutable action pins; local instructions reproduce the checks and clearly identify opt-in native, GUI, WSL and hardware gates that CI does not satisfy."
+        ]
+      },
+      "display": {
+        "summary": "Cross-platform build and automated test CI",
+        "production": [
+          30,
+          60
+        ],
+        "tests": [
+          100,
+          180
+        ]
+      }
+    },
+    {
       "id": "snoozap/7.2",
       "parent": "snoozap/7",
       "state": "planned",
