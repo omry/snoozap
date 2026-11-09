@@ -46,6 +46,19 @@ jobs:
           check-latest: false
           cache: false
 
+      - name: Set up the exact frontend toolchain
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+
+      - name: Build and test bundled frontend
+        working-directory: frontend
+        run: |
+          test "$(node --version)" = "v24.14.0"
+          npm ci --ignore-scripts
+          npm test
+
       - name: Verify toolchain and platform
         run: |
           expected=$(awk '$1 == "go" {print $2}' go.mod)
