@@ -135,11 +135,12 @@ type trayView struct {
 	limitations             []*application.MenuItem
 	auto, awake, allow      *application.MenuItem
 	presets                 []*application.MenuItem
+	custom                  *application.MenuItem
 	icons                   map[string][]byte
 	icon                    string
 }
 
-func newTray(a *application.App, execute func(model.Command)) *trayView {
+func newTray(a *application.App, execute func(model.Command), show func(bool)) *trayView {
 	v := &trayView{tray: a.SystemTray.New(), icons: map[string][]byte{}}
 	for _, kind := range []string{"accepted", "allowed", "unknown", "paused", "failed"} {
 		v.icons[kind] = trayIcon(kind)
@@ -168,6 +169,7 @@ func newTray(a *application.App, execute func(model.Command)) *trayView {
 			execute(model.Command{Operation: "mode", Mode: model.Awake, Duration: preset.duration})
 		}))
 	}
+	v.custom = sub.Add("Custom…").OnClick(func(*application.Context) { show(true) })
 	v.allow = mode("Allow sleep", model.AllowSleep)
 	menu.AddSeparator()
 	for i := 0; i < maxLimitationItems; i++ {
@@ -177,9 +179,10 @@ func newTray(a *application.App, execute func(model.Command)) *trayView {
 		}
 		v.limitations = append(v.limitations, item)
 	}
+	menu.Add("Open SnooZap").OnClick(func(*application.Context) { show(false) })
 	menu.Add("Quit SnooZap").OnClick(func(*application.Context) { execute(model.Command{Operation: "stop"}) })
 	v.tray.SetMenu(menu)
-	v.tray.OnClick(v.tray.OpenMenu).OnRightClick(v.tray.OpenMenu)
+	v.tray.OnClick(func() { show(false) }).OnRightClick(v.tray.OpenMenu)
 	v.tray.SetIcon(v.icons["unknown"])
 	v.tray.SetTooltip("SnooZap · Connecting · Protection is unconfirmed")
 	return v
@@ -228,6 +231,9 @@ func (v *trayView) render(state State) {
 		if item.Enabled() != enabled {
 			item.SetEnabled(enabled)
 		}
+	}
+	if v.custom.Enabled() != enabled {
+		v.custom.SetEnabled(enabled)
 	}
 	if p.Icon != v.icon {
 		v.tray.SetIcon(v.icons[p.Icon])

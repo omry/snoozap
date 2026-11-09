@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"], "strict": true,
+    "outDir": "dist", "noEmitOnError": true
+  },
+  "include": ["status.ts"]
+}
