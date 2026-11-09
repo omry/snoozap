@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SnooZap</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/wails/runtime.js"></script>
+  <script type="module" src="/status.js"></script>
+</head>
+<body>
+<main>
+  <header><p class="brand">SnooZap</p><h1 id="title" aria-live="polite" aria-atomic="true">Connecting…</h1></header>
+  <section aria-label="Current status">
+    <p id="activity" aria-live="polite" aria-atomic="true">Observed activity: Unknown</p>
+    <p id="reason">Protection is unconfirmed</p>
+    <p id="selected">Mode unavailable</p>
+    <p id="request" aria-live="polite" aria-atomic="true">No accepted sleep-prevention request</p>
+  </section>
+  <fieldset id="modes" disabled>
+    <legend>Selected mode</legend>
+    <div class="buttons">
+      <button type="button" data-mode="auto" aria-pressed="false">Auto</button>
+      <button type="button" data-mode="awake" aria-pressed="false">Stay awake</button>
+      <button type="button" data-mode="allow-sleep" aria-pressed="false">Allow sleep</button>
+    </div>
+    <div class="buttons" aria-label="Stay awake presets">
+      <button type="button" data-mode="awake" data-duration="15m">15 minutes</button>
+      <button type="button" data-mode="awake" data-duration="1h">1 hour</button>
+      <button type="button" data-mode="awake" data-duration="4h">4 hours</button>
+    </div>
+  </fieldset>
+    <form id="custom" novalidate>
+      <label for="duration">Custom stay-awake duration</label>
+      <p id="duration-help">Use a positive duration, for example 30m or 1h30m. The timer returns to Auto.</p>
+      <input id="duration" name="duration" type="text" autocomplete="off" spellcheck="false" maxlength="100" aria-describedby="duration-help error">
+      <div class="buttons"><button type="submit" disabled>Confirm duration</button><button type="button" id="cancel">Cancel</button></div>
+    </form>
+  <p id="error" role="alert"></p>
+  <section aria-labelledby="limitations-title"><h2 id="limitations-title">Limitations</h2><ul id="limitations"><li>Runtime limitations unavailable</li></ul></section>
+  <footer>Closing this window keeps SnooZap running in the notification area. Use Quit SnooZap in its tray menu to stop it.</footer>
+</main>
+</body>
+</html>

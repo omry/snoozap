@@ -3,9 +3,15 @@
 package windows_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,13 +26,372 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
+	"github.com/omry/snoozap/frontend"
 	"github.com/omry/snoozap/internal/app"
 	"github.com/omry/snoozap/internal/desktop"
 	"github.com/omry/snoozap/internal/engine"
 	"github.com/omry/snoozap/internal/ipc"
 	"github.com/omry/snoozap/internal/model"
 	native "github.com/omry/snoozap/internal/platform/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/w32"
 )
+
+func statusCall(method string, args ...any) string {
+	body, _ := json.Marshal(map[string]any{"object": 0, "method": 0, "args": map[string]any{
+		"call-id": "guard-test", "methodName": "github.com/omry/snoozap/internal/desktop.StatusBridge." + method, "args": args,
+	}})
+	return string(body)
+}
+
+func TestStatusGuardAuthorizesBeforeDispatchAndPrivateResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, origin, contentType, path, body, chunk, site string
+		allowed                                                    bool
+	}{
+		{name: "read", allowed: true},
+		{name: "mode", body: statusCall("Mode", "awake", "1h30m"), allowed: true},
+		{name: "no-origin", origin: "-"},
+		{name: "opaque-origin", origin: "null"},
+		{name: "file-origin", origin: "file://"},
+		{name: "external-origin", origin: "https://example.com"},
+		{name: "arbitrary-localhost", origin: "http://localhost"},
+		{name: "local-ip", origin: "http://127.0.0.1"},
+		{name: "other-port", origin: "http://wails.localhost:1234"},
+		{name: "prefix-origin", origin: "http://wails.localhost.evil"},
+		{name: "https-origin", origin: "https://wails.localhost"},
+		{name: "image-get", method: "GET", path: "/wails/runtime?object=0&method=0&args={}"},
+		{name: "simple-post", contentType: "text/plain"},
+		{name: "form-post", contentType: "application/x-www-form-urlencoded"},
+		{name: "options", method: "OPTIONS"},
+		{name: "query-dispatch", path: "/wails/runtime?object=0"},
+		{name: "chunk", chunk: "external"},
+		{name: "cross-site", site: "cross-site"},
+		{name: "unknown-method", body: statusCall("Close")},
+		{name: "wrong-arity", body: statusCall("Mode", "awake")},
+		{name: "other-object", body: `{"object":4,"method":0,"args":{}}`},
+		{name: "method-id", body: `{"object":0,"method":0,"args":{"call-id":"x","methodID":1,"args":[]}}`},
+		{name: "missing-dispatch", body: `{"args":{}}`},
+		{name: "extra-document", body: statusCall("Read") + `{}`},
+		{name: "oversized", body: statusCall("Mode", "awake", strings.Repeat("1", 4096))},
+		{name: "unknown-route", path: "/wails/events"},
+		{name: "source-files", path: "/status.ts"},
+		{name: "npm-files", path: "/node_modules/jsdom/package.json"},
+		{name: "host-alias", path: "http://wails.localhost.evil/wails/runtime"},
+		{name: "host-port", path: "http://wails.localhost:1234/wails/runtime"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			method, origin, contentType, path, body := tc.method, tc.origin, tc.contentType, tc.path, tc.body
+			if method == "" {
+				method = "POST"
+			}
+			if origin == "" {
+				origin = "http://wails.localhost"
+			}
+			if contentType == "" {
+				contentType = "application/json"
+			}
+			if path == "" {
+				path = "/wails/runtime"
+			}
+			if body == "" {
+				body = statusCall("Read")
+			}
+			if strings.HasPrefix(path, "/") {
+				path = "http://wails.localhost" + path
+			}
+			req := httptest.NewRequest(method, path, strings.NewReader(body))
+			if origin != "-" {
+				req.Header.Set("Origin", origin)
+			}
+			req.Header.Set("Content-Type", contentType)
+			if tc.chunk != "" {
+				req.Header.Set("X-Wails-Chunk-Id", tc.chunk)
+			}
+			req.Header.Set("Sec-Fetch-Site", tc.site)
+			reached := false
+			handler := desktop.StatusMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				if _, err := io.ReadAll(r.Body); err != nil {
+					t.Fatal(err)
+				}
+				_, _ = w.Write([]byte("PRIVATE-FIXTURE-ONLY"))
+			}))
+			out := httptest.NewRecorder()
+			handler.ServeHTTP(out, req)
+			if reached != tc.allowed || strings.Contains(out.Body.String(), "PRIVATE-FIXTURE-ONLY") != tc.allowed {
+				t.Fatalf("dispatch/private response allowed=%v reached=%v code=%v body=%s", tc.allowed, reached, out.Code, out.Body.String())
+			}
+			if !tc.allowed && out.Code < 400 {
+				t.Fatal("denial reported success")
+			}
+			if out.Header().Get("Access-Control-Allow-Origin") != "" || !strings.Contains(out.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") || out.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("missing response isolation", out.Header())
+			}
+		})
+	}
+}
+
+func TestStatusBundledAssetsHaveNoDevelopmentFallback(t *testing.T) {
+	handler := desktop.StatusMiddleware(frontend.Handler())
+	for _, path := range []string{"/", "/index.html", "/styles.css", "/status.js"} {
+		for _, method := range []string{"GET", "HEAD", "POST"} {
+			out := httptest.NewRecorder()
+			handler.ServeHTTP(out, httptest.NewRequest(method, "http://wails.localhost"+path, nil))
+			if method == "POST" {
+				if out.Code != 405 {
+					t.Fatal(path, out.Code)
+				}
+				continue
+			}
+			if out.Code != 200 || method == "GET" && out.Body.Len() == 0 || method == "HEAD" && out.Body.Len() != 0 {
+				t.Fatal(path, method, out.Code, out.Body.Len())
+			}
+		}
+	}
+}
+
+type statusCountingService struct {
+	model.Service
+	count int
+	last  model.Command
+}
+
+func (s *statusCountingService) Execute(ctx context.Context, cmd model.Command) (model.Snapshot, error) {
+	s.count++
+	s.last = cmd
+	return s.Service.Execute(ctx, cmd)
+}
+
+func TestStatusCustomUsesSharedEngineDurationValidationAndOneCommand(t *testing.T) {
+	service := &statusCountingService{Service: engine.New(context.Background(), &trayPower{}, failingSuspendClock{origin: time.Now().Add(-time.Second)}, "", engine.Options{ReadPower: func(context.Context) (model.Battery, error) { return model.Battery{Source: "ac", Known: true}, nil }})}
+	updates, update := trayUpdates()
+	controller := desktop.NewController(context.Background(), service, update)
+	t.Cleanup(func() { _ = controller.Close() })
+	waitTray(t, updates, func(s desktop.State) bool { return s.Connected })
+	bridge := desktop.NewStatusBridge(controller)
+	initial := bridge.Read()
+	for _, duration := range []string{"0", "0s", "-1m", "garbage", "1", "1d", "999999999999999999999h", "1h;stop", " 1h", "NaN", "1e9s"} {
+		result, err := bridge.Mode(model.Awake, duration)
+		if !errors.Is(err, model.ErrInvalidInput) || result.State.Snapshot.Sequence != initial.State.Snapshot.Sequence || service.count != 0 {
+			t.Fatal("invalid custom input mutated state", duration, err, service.count)
+		}
+	}
+	for _, mode := range []model.Mode{model.Auto, model.AllowSleep, "stop"} {
+		if _, err := bridge.Mode(mode, "1h"); !errors.Is(err, model.ErrInvalidInput) || service.count != 0 {
+			t.Fatal("unrelated command dispatched", mode, err)
+		}
+	}
+	result, err := bridge.Mode(model.Awake, "1h30m")
+	if err != nil || service.count != 1 || service.last.Duration != 90*time.Minute || result.State.Snapshot.Mode != model.Awake || result.State.Snapshot.Deadline == nil || !result.State.Snapshot.NativeRequestAccepted {
+		t.Fatal("custom confirmation diverged from engine", result, err, service.count, service.last)
+	}
+	if _, err := bridge.Mode(model.Auto, ""); err != nil || service.count != 2 {
+		t.Fatal(err, service.count)
+	}
+	// A valid parsed duration near MaxInt64 still passes through the Service's
+	// elapsed-clock overflow bound; the bridge does not bypass it.
+	before := bridge.Read()
+	_, err = bridge.Mode(model.Awake, "9223372036854775807ns")
+	if err == nil || bridge.Read().State.Snapshot.Mode != before.State.Snapshot.Mode {
+		t.Fatal("Service duration bound bypassed", err)
+	}
+}
+
+// Run the real bundled module and stock WebView2 in a separate test process.
+// Only this fixture's fake power backend is reachable; no owner lock is taken.
+func TestNativeStatusBundledWindowAndOriginIsolation(t *testing.T) {
+	requireNative(t)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, "-test.run=^TestStatusWebviewFixtureChild$", "-test.v", "-test.timeout=30s")
+	cmd.Env = append(os.Environ(), "SNOOZAP_STATUS_FIXTURE=1", "SNOOZAP_STATUS_FIXTURE_DATA="+t.TempDir())
+	out, err := cmd.CombinedOutput()
+	if err != nil || !bytes.Contains(out, []byte("STATUS_NATIVE_ISOLATION_PASSED")) {
+		t.Fatalf("isolated bundled WebView fixture: %v\n%s", err, out)
+	}
+	t.Log(string(out))
+}
+
+type statusPrivateService struct {
+	model.Service
+	commands atomic.Int32
+}
+
+func (*statusPrivateService) private(s model.Snapshot) model.Snapshot {
+	s.Reason = "PRIVATE-FIXTURE-STATUS <img class=injection src=x>"
+	return s
+}
+func (s *statusPrivateService) Execute(ctx context.Context, command model.Command) (model.Snapshot, error) {
+	s.commands.Add(1)
+	value, err := s.Service.Execute(ctx, command)
+	return s.private(value), err
+}
+func (s *statusPrivateService) Subscribe(ctx context.Context) (<-chan model.Snapshot, error) {
+	source, err := s.Service.Subscribe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make(chan model.Snapshot)
+	go func() {
+		defer close(result)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case value, ok := <-source:
+				if !ok {
+					return
+				}
+				select {
+				case result <- s.private(value):
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return result, nil
+}
+
+func TestStatusWebviewFixtureChild(t *testing.T) {
+	if os.Getenv("SNOOZAP_STATUS_FIXTURE") != "1" {
+		t.Skip("isolated WebView fixture child only")
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if hr := w32.CoInitializeEx(w32.COINIT_APARTMENTTHREADED); hr != 0 && hr != 1 {
+		t.Fatalf("fixture COM initialization failed: %x", hr)
+	}
+	defer w32.CoUninitialize()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service := &statusPrivateService{Service: engine.New(ctx, &trayPower{}, nil, "", engine.Options{ReadPower: func(context.Context) (model.Battery, error) { return model.Battery{Source: "ac", Known: true}, nil }})}
+	controller := desktop.NewController(ctx, service, func(desktop.State) {})
+	defer controller.Close()
+	labels := make(chan string, 32)
+	result := make(chan map[string]bool, 1)
+	var denied atomic.Int32
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/result" {
+			var value map[string]bool
+			if json.NewDecoder(r.Body).Decode(&value) == nil {
+				select {
+				case result <- value:
+				default:
+				}
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<!doctype html><title>Untrusted fixture</title><p>External document</p><script>
+const call={object:0,method:0,args:{'call-id':'external-read',methodName:'github.com/omry/snoozap/internal/desktop.StatusBridge.Read',args:[]}};
+const mode={object:0,method:0,args:{'call-id':'external-mode',methodName:'github.com/omry/snoozap/internal/desktop.StatusBridge.Mode',args:['awake','4h']}};
+let leak=false;let loaded=true;
+const body=JSON.stringify(call), target='http://wails.localhost/wails/runtime';
+fetch(target,{method:'POST',headers:{'Content-Type':'application/json'},body}).then(r=>r.text()).then(t=>{leak ||= t.includes('PRIVATE-FIXTURE-STATUS')}).catch(()=>{});
+fetch(target,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(mode)}).catch(()=>{});
+let image=new Image();image.src=target+'?object=0&method=0&args='+encodeURIComponent(JSON.stringify(call.args));document.body.append(image);
+let frame=document.createElement('iframe');frame.srcdoc='<script>fetch("'+target+'",{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain"},body:'+JSON.stringify(body)+'}).catch(()=>{})<\/script>';document.body.append(frame);
+setTimeout(()=>{leak ||= document.body.innerText.includes('PRIVATE-FIXTURE-STATUS');fetch('/result',{method:'POST',body:JSON.stringify({external_loaded:loaded,private_state_leaked:leak})})},1800);
+</script>`)
+	}))
+	defer external.Close()
+	url, _ := json.Marshal(external.URL)
+	// Appending a test driver keeps the actual compiled interface and CSP intact.
+	driver := strings.ReplaceAll(statusNativeDriver, "EXTERNAL_FIXTURE_URL", string(url))
+	assets := frontend.Handler()
+	a := application.New(application.Options{Name: "SnooZap isolated status acceptance", Services: []application.Service{application.NewService(desktop.NewStatusBridge(controller))},
+		Windows: application.WindowsOptions{WndClass: "SnooZapIsolatedStatusFixture", WebviewUserDataPath: os.Getenv("SNOOZAP_STATUS_FIXTURE_DATA")},
+		Assets: application.AssetOptions{Middleware: func(next http.Handler) http.Handler {
+			guarded := desktop.StatusMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/wails/runtime" {
+					body, _ := io.ReadAll(r.Body)
+					r.Body = io.NopCloser(bytes.NewReader(body))
+					var value struct {
+						Args struct {
+							ID string `json:"call-id"`
+						} `json:"args"`
+					}
+					_ = json.Unmarshal(body, &value)
+					if strings.HasPrefix(value.Args.ID, "fixture-") {
+						labels <- value.Args.ID
+					}
+				}
+				next.ServeHTTP(w, r)
+			}))
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/wails/runtime" && r.Header.Get("Origin") != "http://wails.localhost" {
+					denied.Add(1)
+				}
+				guarded.ServeHTTP(w, r)
+			})
+		}, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/status.js" {
+				assets.ServeHTTP(w, r)
+				return
+			}
+			out := httptest.NewRecorder()
+			assets.ServeHTTP(out, r)
+			w.Header().Set("Content-Type", "text/javascript")
+			_, _ = w.Write(out.Body.Bytes())
+			_, _ = io.WriteString(w, "\n"+driver)
+		})},
+	})
+	a.Window.NewWithOptions(application.WebviewWindowOptions{Title: "SnooZap isolated status acceptance", URL: "/", Width: 620, Height: 720, DevToolsEnabled: false})
+	completed := make(chan error, 1)
+	go func() {
+		var failure error
+		select {
+		case value := <-result:
+			if !value["external_loaded"] || value["private_state_leaked"] || denied.Load() < 4 || service.commands.Load() != 4 {
+				failure = fmt.Errorf("native boundary: result=%v denied=%d Service commands=%d", value, denied.Load(), service.commands.Load())
+			}
+		case <-time.After(20 * time.Second):
+			failure = errors.New("native status fixture timed out")
+		}
+		observed := []string{}
+		for len(labels) > 0 {
+			observed = append(observed, <-labels)
+		}
+		if len(observed) != 1 || observed[0] != "fixture-ui-passed" {
+			failure = fmt.Errorf("native UI results=%v; boundary=%v", observed, failure)
+		}
+		completed <- failure
+		application.InvokeAsync(a.Quit)
+	}()
+	if err := a.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-completed; err != nil {
+		t.Fatal(err)
+	}
+	t.Log("STATUS_NATIVE_ISOLATION_PASSED: bundled UI, positive custom/replacement/expiry, invalid/cancel/overflow, external JSON/simple POST, image GET and frame; fake power only")
+}
+
+const statusNativeDriver = `
+(async()=>{
+const wait=async(test)=>{for(let i=0;i<100;i++){if(test())return;await new Promise(r=>setTimeout(r,50))}throw Error('UI wait failed')};
+const doc=document, field=doc.getElementById('duration'), form=doc.getElementById('custom'), modes=doc.getElementById('modes');
+const submit=(value)=>{field.value=value;form.dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}))};
+const call=async(name,args,id)=>{const r=await fetch('/wails/runtime',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({object:0,method:0,args:{'call-id':id,methodName:'github.com/omry/snoozap/internal/desktop.StatusBridge.'+name,args}})});if(!r.ok)throw Error('binding '+r.status);return r.json()};
+await wait(()=>!modes.disabled);
+if(!doc.getElementById('reason').textContent.includes('PRIVATE-FIXTURE-STATUS')||doc.querySelector('.injection'))throw Error('private response/text render');
+submit('1h30m');await wait(()=>!modes.disabled&&doc.getElementById('selected').textContent.includes('Stay awake'));
+let first=await call('Read',[],'native-observe-1');if(first.State.Snapshot.remaining_ms<5390000)throw Error('wrong duration');
+doc.getElementById('cancel').click();if(field.value!==''||doc.activeElement!==field)throw Error('cancel/focus');
+for(const value of ['invalid','999999999999999999999h']){submit(value);await wait(()=>!modes.disabled&&doc.getElementById('error').textContent.includes('not confirmed'))}
+let unchanged=await call('Read',[],'native-observe-2');if(unchanged.State.Snapshot.deadline!==first.State.Snapshot.deadline)throw Error('invalid/cancel changed deadline');
+submit('150ms');await wait(()=>!modes.disabled&&doc.getElementById('selected').textContent==='Selected: Auto');
+doc.querySelector('[data-mode="allow-sleep"]').click();await wait(()=>!modes.disabled&&doc.getElementById('selected').textContent.includes('Allow sleep'));
+doc.querySelector('[data-mode="auto"]').click();await wait(()=>!modes.disabled&&doc.getElementById('selected').textContent==='Selected: Auto');
+await call('Read',[],'fixture-ui-passed');location.href=EXTERNAL_FIXTURE_URL;
+})().catch(async(error)=>{await fetch('/wails/runtime',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({object:0,method:0,args:{'call-id':'fixture-ui-failed-'+String(error).slice(0,40),methodName:'github.com/omry/snoozap/internal/desktop.StatusBridge.Read',args:[]}})})});
+`
 
 func TestTrayStatusSeparatesSelectedModeFromAcceptedProtection(t *testing.T) {
 	accepted := model.Snapshot{SchemaVersion: 1, Sequence: 1, Mode: model.Awake, Activity: model.Inactive, DesiredHold: true, NativeRequestActive: true, NativeRequestAccepted: true, Hold: model.Hold{Requested: true, OSAccepted: true}, Reason: "Manual Stay awake"}
@@ -564,7 +929,8 @@ func TestNativeTrayOwnedExternalStopReleasesOwner(t *testing.T) {
 	}
 	waitExit := func(cmd *exec.Cmd) {
 		if err := cmd.Wait(); err != nil {
-			t.Fatalf("tray fixture exited with error: %v", err)
+			log, _ := os.ReadFile(cmd.Stdout.(*os.File).Name())
+			t.Fatalf("tray fixture exited with error: %v\n%s", err, log)
 		}
 	}
 	if code, _, output := status(); code != 3 {
@@ -675,6 +1041,84 @@ func trayWindow(pid int, parent uintptr, class string) uintptr {
 		}
 		previous = hwnd
 	}
+}
+
+func trayStatusWindow(pid int) uintptr {
+	class, _ := syscall.UTF16PtrFromString("SnooZapTrayWindow")
+	title, _ := syscall.UTF16PtrFromString("SnooZap")
+	var previous uintptr
+	for {
+		hwnd := trayCall("FindWindowExW", 0, previous, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(title)))
+		if hwnd == 0 {
+			return 0
+		}
+		var owner uint32
+		trayCall("GetWindowThreadProcessId", hwnd, uintptr(unsafe.Pointer(&owner)))
+		if int(owner) == pid {
+			return hwnd
+		}
+		previous = hwnd
+	}
+}
+
+func statusAccessibility(t *testing.T, hwnd uintptr, action string) {
+	t.Helper()
+	// UI Automation stays under the already PID-verified fixture window. It
+	// neither sends global keystrokes nor changes Windows foreground policy.
+	script := fmt.Sprintf(`
+$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$root=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]%d)
+$condition=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty,'duration')
+$input=$null
+for($i=0;$i -lt 80;$i++){$input=$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition);if($null -ne $input){break};Start-Sleep -Milliseconds 50}
+if($null -eq $input){throw 'bundled duration field not accessible'}
+$action='%s'
+if($action -eq 'focus'){
+$input.SetFocus();for($i=0;$i -lt 40 -and -not $input.Current.HasKeyboardFocus;$i++){Start-Sleep -Milliseconds 50}
+if(-not $input.Current.HasKeyboardFocus){throw 'duration focus failed'}
+}
+elseif($action -eq 'check-focus'){
+for($i=0;$i -lt 40 -and -not $input.Current.HasKeyboardFocus;$i++){Start-Sleep -Milliseconds 50}
+if(-not $input.Current.HasKeyboardFocus){throw 'Custom did not focus duration'}
+}
+elseif($action -eq 'focus-cancel'){
+$condition=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty,'cancel')
+$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition).SetFocus()
+}
+elseif($action -eq 'cancel'){
+$input.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('2h')
+$condition=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty,'cancel')
+$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+for($i=0;$i -lt 40 -and $input.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '';$i++){Start-Sleep -Milliseconds 50}
+if($input.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne ''){throw 'Cancel retained draft'}
+}
+else{
+$value=$input.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+$value.SetValue($action)
+$condition=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,'Confirm duration')
+$button=$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+$invoke=$button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern);$invoke.Invoke()
+}
+`, hwnd, action)
+	encoded := base64.StdEncoding.EncodeToString(utf16Bytes(script))
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", encoded).CombinedOutput()
+	if err != nil {
+		t.Fatalf("fixture accessibility %q: %v\n%s", action, err, out)
+	}
+}
+
+func utf16Bytes(s string) []byte {
+	units := utf16.Encode([]rune(s))
+	out := make([]byte, 2*len(units))
+	for i, value := range units {
+		out[2*i] = byte(value)
+		out[2*i+1] = byte(value >> 8)
+	}
+	return out
 }
 
 func trayEventually(t *testing.T, description string, check func() bool) {
@@ -816,7 +1260,7 @@ func TestNativeTrayProcessMenuActivationAndQuit(t *testing.T) {
 			if attached {
 				console = launch(t, executable(t), t.TempDir())
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, exe)
 			for _, entry := range os.Environ() {
@@ -835,6 +1279,14 @@ func TestNativeTrayProcessMenuActivationAndQuit(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() {
+				if t.Failed() {
+					foreground := trayCall("GetForegroundWindow")
+					var foregroundPID uint32
+					trayCall("GetWindowThreadProcessId", foreground, uintptr(unsafe.Pointer(&foregroundPID)))
+					t.Logf("foreground=%x pid=%d fixture=%d", foreground, foregroundPID, cmd.Process.Pid)
+					contents, _ := os.ReadFile(log.Name())
+					t.Logf("fixture log:\n%s", contents)
+				}
 				if cmd.ProcessState == nil {
 					_ = cmd.Process.Kill()
 					_ = cmd.Wait()
@@ -860,6 +1312,7 @@ func TestNativeTrayProcessMenuActivationAndQuit(t *testing.T) {
 				t.Fatal("empty tray startup overclaimed or failed", s)
 			}
 			open := func(event uintptr) (uintptr, uintptr) {
+				t.Logf("opening fixture menu callback=%x process=%d tray=%x", event, cmd.Process.Pid, hwnd)
 				if trayCall("PostMessageW", hwnd, 0x401, 0, event) == 0 {
 					t.Fatal("fixture tray callback failed")
 				}
@@ -873,7 +1326,22 @@ func TestNativeTrayProcessMenuActivationAndQuit(t *testing.T) {
 				})
 				return popup, menu
 			}
-			popup, menu := open(0x202) // The shell's primary-button callback.
+			var statusWindow uintptr
+			trayEventually(t, "bundled status window unavailable", func() bool {
+				statusWindow = trayStatusWindow(cmd.Process.Pid)
+				return statusWindow != 0
+			})
+			if trayCall("IsWindowVisible", statusWindow) != 0 {
+				t.Fatal("tray startup unexpectedly showed the window")
+			}
+			trayCall("PostMessageW", hwnd, 0x401, 0, 0x400) // NIN_SELECT, primary activation.
+			trayEventually(t, "primary activation did not show status", func() bool { return trayCall("IsWindowVisible", statusWindow) != 0 })
+			trayCall("PostMessageW", statusWindow, 0x10, 0, 0)
+			trayEventually(t, "close did not hide status", func() bool { return trayCall("IsWindowVisible", statusWindow) == 0 })
+			if status(model.Auto).Mode != model.Auto {
+				t.Fatal("window close changed mode")
+			}
+			popup, menu := open(0x205) // The shell's secondary-button callback.
 			trayEventually(t, "native menu does not reflect the empty engine snapshot", func() bool {
 				return strings.Contains(trayMenuLabel(menu, 0), "Normal sleep allowed") && trayMenuLabel(menu, 5) == "Auto" &&
 					trayMenuContainsLimitations(menu, runtimeLimitations()[:3])
@@ -903,15 +1371,22 @@ func TestNativeTrayProcessMenuActivationAndQuit(t *testing.T) {
 			if s := status(model.Awake); !s.NativeRequestAccepted {
 				t.Fatal("activation payload mutated or stopped the runtime", s)
 			}
-			// Repeated launch opens the existing menu; read native command IDs
-			// from that menu rather than assuming framework-assigned IDs.
-			trayEventually(t, "activation did not open the existing menu", func() bool {
-				popup := trayWindow(cmd.Process.Pid, 0, "#32768")
-				if popup != 0 {
-					menu = trayCall("SendMessageW", popup, 0x1e1, 0, 0)
-				}
-				return popup != 0 && menu != 0
+			trayEventually(t, "activation did not reopen the existing window", func() bool {
+				return trayCall("IsWindowVisible", statusWindow) != 0
 			})
+			// This launcher is a background test process. Windows can deny its
+			// foreground handoff while the user works elsewhere. Verify native
+			// keyboard focus through the real accessibility provider separately.
+			statusAccessibility(t, statusWindow, "focus")
+			if trayStatusWindow(cmd.Process.Pid) != statusWindow {
+				t.Fatal("activation replaced the existing window")
+			}
+			statusAccessibility(t, statusWindow, "focus-cancel")
+			trayCall("PostMessageW", statusWindow, 0x10, 0, 0)
+			trayEventually(t, "status window did not hide before Open SnooZap", func() bool {
+				return trayCall("IsWindowVisible", statusWindow) == 0
+			})
+			_, menu = open(0x205)
 			if !strings.Contains(trayMenuLabel(menu, 0), "Keeping awake") {
 				t.Fatal("native view did not show accepted protection", trayMenuLabel(menu, 0))
 			}
@@ -923,10 +1398,55 @@ func TestNativeTrayProcessMenuActivationAndQuit(t *testing.T) {
 				trayCall("PostMessageW", hwnd, 0x1f, 0, 0) // Cancel only this fixture's popup.
 				trayCall("PostMessageW", hwnd, 0x111, id, 0)
 			}
+			openID := trayMenuItemID(menu, "Open SnooZap")
+			if openID == ^uintptr(0) {
+				t.Fatal("Open SnooZap action missing")
+			}
+			trayCall("PostMessageW", hwnd, 0x1f, 0, 0)
+			trayCall("PostMessageW", hwnd, 0x111, openID, 0)
+			trayEventually(t, "Open SnooZap did not show the existing window", func() bool {
+				return trayCall("IsWindowVisible", statusWindow) != 0 && trayStatusWindow(cmd.Process.Pid) == statusWindow
+			})
+			trayCall("PostMessageW", statusWindow, 0x10, 0, 0)
+			trayEventually(t, "Open SnooZap close did not hide", func() bool { return trayCall("IsWindowVisible", statusWindow) == 0 })
+			_, menu = open(0x205)
 			presets := trayCall("GetSubMenu", menu, 7)
 			if trayMenuLabel(presets, 0) != "15 minutes" || trayMenuLabel(presets, 2) != "4 hours" {
 				t.Fatal("timed native menu presets missing")
 			}
+			if trayMenuLabel(presets, 3) != "Custom…" {
+				t.Fatal("Custom action missing")
+			}
+			invoke(presets, 3)
+			trayEventually(t, "Custom did not open the status window", func() bool { return trayCall("IsWindowVisible", statusWindow) != 0 })
+			statusAccessibility(t, statusWindow, "check-focus")
+			statusAccessibility(t, statusWindow, "1h30m")
+			var custom model.Snapshot
+			trayEventually(t, "graphical Custom did not reach shared Service", func() bool {
+				var err error
+				custom, err = client.Snapshot(ctx)
+				return err == nil && custom.Deadline != nil && custom.RemainingMS > 89*time.Minute.Milliseconds() && custom.NativeRequestAccepted
+			})
+			statusAccessibility(t, statusWindow, "cancel")
+			statusAccessibility(t, statusWindow, "invalid")
+			statusAccessibility(t, statusWindow, "check-focus")
+			unchanged, err := client.Snapshot(ctx)
+			if err != nil || unchanged.Deadline == nil || !unchanged.Deadline.Equal(*custom.Deadline) {
+				t.Fatal("invalid/cancel changed custom timer", err)
+			}
+			if console != nil {
+				if fromConsole := console.status(t, ""); fromConsole.Deadline == nil || !fromConsole.Deadline.Equal(*custom.Deadline) {
+					t.Fatal("attached console disagrees with graphical Custom")
+				}
+			}
+			trayCall("PostMessageW", statusWindow, 0x10, 0, 0)
+			trayEventually(t, "Custom close did not hide", func() bool { return trayCall("IsWindowVisible", statusWindow) == 0 })
+			preserved, err := client.Snapshot(ctx)
+			if err != nil || preserved.Deadline == nil || !preserved.Deadline.Equal(*custom.Deadline) || !preserved.NativeRequestAccepted {
+				t.Fatal("closing Custom lost timer/protection", err)
+			}
+			_, menu = open(0x205)
+			presets = trayCall("GetSubMenu", menu, 7)
 			invoke(presets, 1)
 			trayEventually(t, "native timed action did not set its deadline", func() bool {
 				s, err := client.Snapshot(ctx)
@@ -973,6 +1493,15 @@ func TestNativeTrayProcessMenuActivationAndQuit(t *testing.T) {
 			trayCall("GetWindowThreadProcessId", target, uintptr(unsafe.Pointer(&targetPID)))
 			if int(targetPID) != cmd.Process.Pid || target != popup {
 				t.Fatalf("mouse target differs: target=%x pid=%d popup=%x fixture=%d rect=%+v point=%+v", target, targetPID, popup, cmd.Process.Pid, rect, point)
+			}
+			// SetCursorPos queues mouse movement. The menu can still highlight
+			// the previous keyboard row until its UI thread handles that move.
+			trayEventually(t, "mouse movement did not highlight native Allow sleep", func() bool {
+				return trayCall("GetMenuState", menu, 8, 0x400)&0x80 != 0
+			})
+			var now struct{ X, Y int32 }
+			if trayCall("GetCursorPos", uintptr(unsafe.Pointer(&now))) == 0 || now != point {
+				t.Fatal("mouse moved before the native Allow sleep click", now, point)
 			}
 			trayCall("mouse_event", 0x2, 0, 0, 0, 0)
 			trayCall("mouse_event", 0x4, 0, 0, 0, 0)

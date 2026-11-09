@@ -16,8 +16,9 @@ External actions use full commit pins. The token has only `contents: read`;
 checkout does not persist credentials. CI uses no repository secrets or release
 publishing, and does not change repository protection settings.
 
-Run these commands from the repository root with the pinned Go version, Bash,
-Git, and a C compiler available. On Windows use Git Bash and a GCC toolchain.
+Run these commands from the repository root with the pinned Go version,
+Node.js 24.14.0 (including npm), Bash, Git, and a C compiler available.
+On Windows use Git Bash and a GCC toolchain.
 Use LF checkouts; CI disables automatic CRLF conversion before checkout.
 
 ```bash
@@ -25,6 +26,9 @@ set -euo pipefail
 export GOTOOLCHAIN=local GOFLAGS=-mod=readonly CGO_ENABLED=1
 export SNOOZAP_NATIVE_ACCEPTANCE=0
 test "$(go env GOVERSION)" = "go$(awk '$1 == "go" {print $2}' go.mod)"
+test "$(node --version)" = "v24.14.0"
+npm --prefix frontend ci --ignore-scripts
+npm --prefix frontend test
 unformatted=$(git ls-files -z -- '*.go' | xargs -0 gofmt -l)
 test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
 go mod verify
