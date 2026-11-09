@@ -504,7 +504,8 @@
           "frontend/tsconfig.json",
           ".gitignore",
           "tests/windows/tray_test.go",
-          ".github/workflows/ci.yml"
+          ".github/workflows/ci.yml",
+          "docs/ci.md"
         ],
         "dependencies": [
           "snoozap/7.1"
