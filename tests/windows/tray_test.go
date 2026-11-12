@@ -1494,6 +1494,11 @@ func TestNativeTrayProcessMenuActivationAndQuit(t *testing.T) {
 			if int(targetPID) != cmd.Process.Pid || target != popup {
 				t.Fatalf("mouse target differs: target=%x pid=%d popup=%x fixture=%d rect=%+v point=%+v", target, targetPID, popup, cmd.Process.Pid, rect, point)
 			}
+			// SetCursorPos queues mouse movement. The menu can still highlight
+			// the previous keyboard row until its UI thread handles that move.
+			trayEventually(t, "mouse movement did not highlight native Allow sleep", func() bool {
+				return trayCall("GetMenuState", menu, 8, 0x400)&0x80 != 0
+			})
 			trayCall("mouse_event", 0x2, 0, 0, 0, 0)
 			trayCall("mouse_event", 0x4, 0, 0, 0, 0)
 			if s := status(model.AllowSleep); s.NativeRequestActive || s.Deadline != nil {
