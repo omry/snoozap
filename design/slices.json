@@ -532,7 +532,7 @@
     {
       "id": "snoozap/8",
       "parent": null,
-      "state": "planned",
+      "state": "replaced",
       "role": "implementation",
       "intent": {
         "title": "[snoozap/8] Build simple setup, rule editing and diagnostics",
@@ -569,6 +569,131 @@
       }
     },
     {
+      "id": "snoozap/8.1",
+      "parent": "snoozap/8",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/8.1] Edit rules, settings and safe history in the desktop",
+        "responsibility": "Extend the existing desktop with Rules, History and Settings using the owning Service. Edit existing process/T3 probes and add local HTTP/power conditions with exact ALL/ANY/NOT expressions, enabled flags and per-probe failure/startup policies. Submit a full validated candidate through existing atomic config apply, preserving unrelated configuration and manual mode/deadline. Expose monitoring and battery settings with truthful effects; clear/export bounded sanitized history. Keep draft inputs, dialogs and keyboard focus during status updates. Wire the bundled entry, asset allowlist and exact frontend build/test configuration. Do not add T3 OAuth, native application selection or startup registration in this child.",
+        "paths": [
+          "frontend/setup.ts",
+          "frontend/rules.ts",
+          "frontend/history.ts",
+          "frontend/settings.ts",
+          "frontend/index.html",
+          "frontend/styles.css",
+          "frontend/assets.go",
+          "frontend/package.json",
+          "frontend/tsconfig.json",
+          "internal/desktop/setup.go",
+          "internal/desktop/app.go",
+          "frontend/setup.test.ts",
+          "frontend/rules.test.ts",
+          "frontend/history.test.ts",
+          "frontend/settings.test.ts",
+          "tests/windows/setup_test.go"
+        ],
+        "dependencies": [
+          "snoozap/7.2.1"
+        ],
+        "acceptance": [
+          "Rule editor rejects invalid full candidates and preserves active configuration, exact expressions, per-probe error/startup policy and manual timers",
+          "History clear/export uses Service redaction and preserves open editors and keyboard focus during polling",
+          "Monitoring off versus Allow sleep and battery thresholds match engine behavior and rejected candidates preserve settings"
+        ]
+      },
+      "display": {
+        "summary": "Edit rules, settings and safe history in the desktop",
+        "production": [
+          650,
+          950
+        ],
+        "tests": [
+          600,
+          900
+        ]
+      }
+    },
+    {
+      "id": "snoozap/8.2",
+      "parent": "snoozap/8",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/8.2] Add local applications and authorize T3 from the desktop",
+        "responsibility": "Complete Add application and Add T3 on the delivered editor. Select current-user native applications or an explicitly selected supported local WSL distribution and disclose the accepted stop-after-preflight race. Use existing T3 Registry.Setup, verified local endpoint/environment identity, protected credential/binding storage and system-browser OAuth. Setup/test operations go through explicit bounded owning-runtime operations for console-owned and tray-owned cases, with the existing local IPC and exact-origin bridge restrictions. One-shot Test uses existing adapters without a second scheduler, enabling a rule or acquiring a hold. Cancellation, sign-in refusal, identity/storage failure and invalid candidate apply preserve configuration and manual deadline and clean temporary secrets/bindings safely. Success creates one understandable enabled rule with its failure policy. No remote environments, general command dispatcher or arbitrary scripts.",
+        "paths": [
+          "frontend/setup.ts",
+          "frontend/setup.test.ts",
+          "internal/desktop/setup.go",
+          "internal/desktop/app.go",
+          "internal/app/windows.go",
+          "internal/model/model.go",
+          "internal/ipc/protocol.go",
+          "internal/ipc/windows.go",
+          "internal/platform/windows/process.go",
+          "internal/platform/windows/wsl.go",
+          "tests/windows/setup_test.go",
+          "internal/ipc/protocol_test.go"
+        ],
+        "dependencies": [
+          "snoozap/8.1"
+        ],
+        "acceptance": [
+          "Application selection cancellation preserves configuration and timer; native/WSL choices produce the intended enabled rule and explain the WSL preflight race",
+          "T3 refusal, timeout, cancellation, identity or credential-store failure preserve the old rule set and timer; success commits one enabled verified local rule"
+        ]
+      },
+      "display": {
+        "summary": "Add local applications and authorize T3 from the desktop",
+        "production": [
+          650,
+          950
+        ],
+        "tests": [
+          600,
+          900
+        ]
+      }
+    },
+    {
+      "id": "snoozap/8.3",
+      "parent": "snoozap/8",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/8.3] Control current-user Windows startup from Settings",
+        "responsibility": "Add explicit opt-in current-user Windows startup registration and observed status in the existing Settings view. Use the native current-user startup primitive and the exact installed tray executable with safely quoted arguments; disable removes only SnooZap's entry. Surface permission/path/write/readback failure without claiming success. Keep monitoring/battery configuration and manual timer intact. Registration does not start another owner, change system-wide settings, change taskbar preferences or enable remote access.",
+        "paths": [
+          "frontend/settings.ts",
+          "frontend/settings.test.ts",
+          "internal/desktop/setup.go",
+          "internal/desktop/app.go",
+          "internal/platform/windows/startup.go",
+          "internal/platform/windows/startup_test.go",
+          "tests/windows/setup_test.go"
+        ],
+        "dependencies": [
+          "snoozap/8.2"
+        ],
+        "acceptance": [
+          "Startup opt-in installs only the current-user entry, disable removes it, and failures do not claim success"
+        ]
+      },
+      "display": {
+        "summary": "Control current-user Windows startup from Settings",
+        "production": [
+          180,
+          300
+        ],
+        "tests": [
+          180,
+          300
+        ]
+      }
+    },
+    {
       "id": "snoozap/9",
       "parent": null,
       "state": "planned",
@@ -584,7 +709,7 @@
           "tests/windows/tui_test.go"
         ],
         "dependencies": [
-          "snoozap/8"
+          "snoozap/8.3"
         ],
         "acceptance": [
           "Desktop/CLI/TUI snapshots agree during timed/manual/automatic holds, unknown sources and battery/OS failures.",
