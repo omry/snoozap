@@ -1,1 +1,5 @@
 /temp/
+/.awd/
+/.watchman/
+/frontend/node_modules/
+/frontend/dist/

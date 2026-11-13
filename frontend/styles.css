@@ -1,0 +1,29 @@
+:root { color-scheme: light dark; font: 100%/1.5 system-ui, sans-serif; background: Canvas; color: CanvasText; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 46rem; margin: auto; padding: 1.5rem; }
+.brand { font-weight: 650; letter-spacing: .04em; margin-bottom: .5rem; }
+h1 { font-size: 1.7rem; line-height: 1.25; margin-top: 0; }
+h1::before { content: "? "; }
+body[data-status="accepted"] h1::before { content: "✓ "; color: #078455; }
+body[data-status="allowed"] h1::before { content: "○ "; }
+body[data-status="paused"] h1::before { content: "Ⅱ "; }
+body[data-status="failed"] h1::before { content: "× "; }
+fieldset { border: 1px solid GrayText; border-radius: .5rem; margin: 1.5rem 0 0; padding: 1rem; min-width: 0; }
+legend, label { font-weight: 600; }
+.buttons { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+button, input { font: inherit; color: inherit; background: Canvas; border: 1px solid ButtonText; border-radius: .3rem; padding: .5rem .75rem; }
+button { cursor: pointer; min-height: 2.75rem; }
+button[aria-pressed="true"] { font-weight: 700; outline: 2px solid Highlight; outline-offset: 1px; }
+button[aria-pressed="true"]::before { content: "✓ "; }
+button:disabled { cursor: default; opacity: .6; }
+:focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
+input { display: block; width: 100%; }
+form { border-top: 1px solid GrayText; margin-top: 1rem; padding-top: 1rem; }
+#duration-help, footer { font-size: .9rem; }
+#error { min-height: 1.5em; font-weight: 600; }
+h2 { font-size: 1.1rem; }
+ul { padding-left: 1.5rem; }
+footer { border-top: 1px solid GrayText; padding-top: 1rem; margin-top: 1.5rem; }
+@media (forced-colors: active) { button[aria-pressed="true"] { outline-color: Highlight; } body[data-status="accepted"] h1::before { color: CanvasText; } }
+@media (max-width: 400px) { main { padding: .75rem; } .buttons button { flex: 1 1 auto; } }
