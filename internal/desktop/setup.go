@@ -53,8 +53,8 @@ func (b *StatusBridge) SetupApply(candidate string, expectedRevision uint64) (St
 	if err != nil {
 		return b.Read(), errors.New("Invalid configuration; prior settings remain active")
 	}
-	err = b.controller.Execute(model.Command{Operation: "config", Configuration: &cfg, ConfigurationRevision: &expectedRevision})
-	return b.Read(), err
+	snapshot, err := b.controller.ExecuteSnapshot(model.Command{Operation: "config", Configuration: &cfg, ConfigurationRevision: &expectedRevision})
+	return b.viewForSnapshot(snapshot), err
 }
 
 func (b *StatusBridge) HistoryRead() (history.Snapshot, error) {

@@ -83,7 +83,7 @@ func TestSetupFullCandidatePreservesExactConfigAndManualDeadline(t *testing.T) {
 	loaded.Settings.Battery.ResumePercent = 40
 	data, _ := config.Export(loaded)
 	view, err := bridge.SetupApply(string(data), doc.ConfigurationRevision)
-	if err != nil || view.State.Snapshot.Monitoring || view.State.Snapshot.Mode != model.Awake || !view.State.Snapshot.Deadline.Equal(*manual.State.Snapshot.Deadline) || !view.State.Snapshot.NativeRequestAccepted {
+	if err != nil || view.State.Snapshot.ConfigurationRevision != doc.ConfigurationRevision+1 || view.State.Snapshot.Monitoring || view.State.Snapshot.Mode != model.Awake || !view.State.Snapshot.Deadline.Equal(*manual.State.Snapshot.Deadline) || !view.State.Snapshot.NativeRequestAccepted {
 		t.Fatal("apply changed manual mode/deadline or did not apply monitoring", view, err)
 	}
 	persisted, err := config.Parse(bytes.NewReader(saved))

@@ -112,17 +112,26 @@ func (c *Controller) publish(s model.Snapshot, message string, finish bool) {
 // Execute never queues or replays a mutation. A later snapshot reconciles an
 // uncertain result. The engine remains the authority for validation and policy.
 func (c *Controller) Execute(cmd model.Command) error {
+	_, err := c.ExecuteSnapshot(cmd)
+	return err
+}
+
+// ExecuteSnapshot returns the snapshot produced by this command before later
+// subscription updates can replace it. Callers that need command-specific
+// result data must use this method instead of reading the cached controller
+// state after Execute.
+func (c *Controller) ExecuteSnapshot(cmd model.Command) (model.Snapshot, error) {
 	if (cmd.Operation != "mode" && cmd.Operation != "stop" && cmd.Operation != "config") || (cmd.Operation == "config" && cmd.Configuration == nil) {
-		return model.ErrInvalidInput
+		return model.Snapshot{}, model.ErrInvalidInput
 	}
 	if !c.command.TryLock() {
-		return model.ErrUnavailable
+		return model.Snapshot{}, model.ErrUnavailable
 	}
 	defer c.command.Unlock()
 	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
-		return err
+		return model.Snapshot{}, err
 	}
 	c.mu.Lock()
 	c.state.Pending = true
@@ -140,7 +149,7 @@ func (c *Controller) Execute(cmd model.Command) error {
 		}
 	}
 	c.publish(s, message, true)
-	return err
+	return s, err
 }
 
 // Close stops a locally owned runtime, or only detaches an IPC client. Explicit
@@ -174,6 +183,15 @@ func (b *StatusBridge) Read() StatusView {
 	defer b.controller.mu.Unlock()
 	s := b.controller.state
 	return StatusView{State: s, Presentation: Describe(s)}
+}
+
+func (b *StatusBridge) viewForSnapshot(snapshot model.Snapshot) StatusView {
+	b.controller.mu.Lock()
+	state := b.controller.state
+	b.controller.mu.Unlock()
+	state.Snapshot = snapshot
+	state.Pending = false
+	return StatusView{State: state, Presentation: Describe(state)}
 }
 
 func (b *StatusBridge) Mode(mode model.Mode, duration string) (StatusView, error) {
