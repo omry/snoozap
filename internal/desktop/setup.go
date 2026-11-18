@@ -17,13 +17,18 @@ import (
 // The editor must not round a decimal through JavaScript's Number type. These
 // are boundary projections of the same configuration, not another stored format.
 type SetupDocument struct {
-	Configuration string            `json:"configuration"`
-	Comparisons   map[string]string `json:"comparisons"`
+	Configuration         string            `json:"configuration"`
+	Comparisons           map[string]string `json:"comparisons"`
+	ConfigurationRevision uint64            `json:"configuration_revision"`
 }
 
 func (b *StatusBridge) SetupRead() (SetupDocument, error) {
 	ctx, cancel := context.WithTimeout(b.controller.ctx, 5*time.Second)
 	defer cancel()
+	snapshot, err := b.controller.service.Snapshot(ctx)
+	if err != nil {
+		return SetupDocument{}, errors.New("Configuration unavailable")
+	}
 	data, err := b.controller.service.ExportConfig(ctx)
 	if err != nil {
 		return SetupDocument{}, errors.New("Configuration unavailable")
@@ -38,17 +43,17 @@ func (b *StatusBridge) SetupRead() (SetupDocument, error) {
 			values[id] = string(probe.Value)
 		}
 	}
-	return SetupDocument{string(data), values}, nil
+	return SetupDocument{Configuration: string(data), Comparisons: values, ConfigurationRevision: snapshot.ConfigurationRevision}, nil
 }
 
-func (b *StatusBridge) SetupApply(candidate string) (StatusView, error) {
+func (b *StatusBridge) SetupApply(candidate string, expectedRevision uint64) (StatusView, error) {
 	// Parse the original full candidate: do not drop unknown keys, duplicate keys,
 	// malformed Unicode or invalid scalar literals by first decoding a loose DTO.
 	cfg, err := config.Parse(bytes.NewBufferString(candidate))
 	if err != nil {
 		return b.Read(), errors.New("Invalid configuration; prior settings remain active")
 	}
-	err = b.controller.Execute(model.Command{Operation: "config", Configuration: &cfg})
+	err = b.controller.Execute(model.Command{Operation: "config", Configuration: &cfg, ConfigurationRevision: &expectedRevision})
 	return b.Read(), err
 }
 

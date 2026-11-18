@@ -243,7 +243,7 @@ func StatusMiddleware(next http.Handler) http.Handler {
 			if err != nil || decoder.Decode(&extra) != io.EOF || call.Object == nil || *call.Object != 0 || call.Method == nil || *call.Method != 0 || len(call.Args.ID) == 0 || len(call.Args.ID) > 64 ||
 				!(call.Args.Name == statusMethodPrefix+"Read" && len(call.Args.Values) == 0 || call.Args.Name == statusMethodPrefix+"Mode" && len(call.Args.Values) == 2 ||
 					(call.Args.Name == statusMethodPrefix+"SetupRead" || call.Args.Name == statusMethodPrefix+"HistoryRead" || call.Args.Name == statusMethodPrefix+"HistoryClear") && len(call.Args.Values) == 0 ||
-					call.Args.Name == statusMethodPrefix+"SetupApply" && len(call.Args.Values) == 1) || call.Args.Name != statusMethodPrefix+"SetupApply" && len(raw) > 4096 {
+					call.Args.Name == statusMethodPrefix+"SetupApply" && len(call.Args.Values) == 2) || call.Args.Name != statusMethodPrefix+"SetupApply" && len(raw) > 4096 {
 				http.Error(w, "Unavailable application operation", http.StatusForbidden)
 				return
 			}
