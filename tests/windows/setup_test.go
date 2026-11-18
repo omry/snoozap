@@ -210,6 +210,19 @@ func TestSetupRejectsStaleDraftAfterMonitoringChanges(t *testing.T) {
 
 type setupFailingService struct{ model.Service }
 
+type setupChangingSnapshotService struct {
+	model.Service
+	changed atomic.Bool
+}
+
+func (s *setupChangingSnapshotService) Snapshot(ctx context.Context) (model.Snapshot, error) {
+	snapshot, err := s.Service.Snapshot(ctx)
+	if err == nil && s.changed.CompareAndSwap(false, true) {
+		_, _ = s.Service.Execute(ctx, model.Command{Operation: "monitor", Monitoring: false})
+	}
+	return snapshot, err
+}
+
 func (setupFailingService) ExportConfig(context.Context) ([]byte, error) {
 	return nil, errors.New("SECRET")
 }
@@ -230,6 +243,23 @@ func TestSetupReadAndClearFailuresDoNotExposeRawErrors(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "SECRET") {
 			t.Fatal("raw service error leaked", err)
 		}
+	}
+}
+
+func TestSetupReadRetriesWhenConfigurationChangesDuringExport(t *testing.T) {
+	base := engine.New(context.Background(), &trayPower{}, nil, "", engine.Options{Configuration: setupConfig(t), Save: func(config.Config) error { return nil }})
+	service := &setupChangingSnapshotService{Service: base}
+	controller := desktop.NewController(context.Background(), service, func(desktop.State) {})
+	t.Cleanup(func() { _ = controller.Close() })
+	document, err := desktop.NewStatusBridge(controller).SetupRead()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.ConfigurationRevision != 2 {
+		t.Fatalf("revision = %d, want 2", document.ConfigurationRevision)
+	}
+	if strings.Contains(document.Configuration, `"monitoring":true`) {
+		t.Fatal("read returned configuration from before the revision change")
 	}
 }
 
