@@ -146,6 +146,31 @@ func TestClientSharesOwnerStateAndDetachDoesNotStopIt(t *testing.T) {
 	}
 }
 
+func TestConfigurationRevisionRejectsStaleIPCApply(t *testing.T) {
+	e := testEngine(t)
+	c := NewClient(testDial(t, e))
+	defer c.Close(context.Background())
+	initial, err := c.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Execute(context.Background(), model.Command{Operation: "monitor", Monitoring: false}); err != nil {
+		t.Fatal(err)
+	}
+	candidate := config.Empty()
+	stale := initial.ConfigurationRevision
+	if _, err := c.Execute(context.Background(), model.Command{Operation: "config", Configuration: &candidate, ConfigurationRevision: &stale}); err == nil {
+		t.Fatal("stale configuration was accepted")
+	}
+	current, err := c.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Monitoring {
+		t.Fatal("stale configuration restored monitoring")
+	}
+}
+
 type countedService struct {
 	model.Service
 	clears atomic.Int32

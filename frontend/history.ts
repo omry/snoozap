@@ -2,7 +2,7 @@ import { button, node } from "./rules.js";
 
 type Record = { sequence: number; time: string; probe_id?: string; operation: string; duration_ms: number; result: string; status_code?: number };
 export type History = { schema_version: number; records: Record[] };
-export type Call = (method: "SetupRead" | "SetupApply" | "HistoryRead" | "HistoryClear", args?: string[]) => Promise<unknown>;
+export type Call = (method: "SetupRead" | "SetupApply" | "HistoryRead" | "HistoryClear", args?: unknown[]) => Promise<unknown>;
 
 // Export only the typed diagnostics returned by Service. Never include a config
 // draft, endpoint, credential reference, raw error, response header or body.
