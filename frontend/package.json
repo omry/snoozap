@@ -6,7 +6,7 @@
   "engines": { "node": "24.14.0" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test status.test.ts"
+    "test": "npm run build && node --test --test-isolation=none status.test.ts setup.test.ts rules.test.ts history.test.ts settings.test.ts"
   },
   "devDependencies": {
     "jsdom": "27.4.0",
