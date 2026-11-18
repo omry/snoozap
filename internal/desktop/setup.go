@@ -25,25 +25,35 @@ type SetupDocument struct {
 func (b *StatusBridge) SetupRead() (SetupDocument, error) {
 	ctx, cancel := context.WithTimeout(b.controller.ctx, 5*time.Second)
 	defer cancel()
-	snapshot, err := b.controller.service.Snapshot(ctx)
-	if err != nil {
-		return SetupDocument{}, errors.New("Configuration unavailable")
-	}
-	data, err := b.controller.service.ExportConfig(ctx)
-	if err != nil {
-		return SetupDocument{}, errors.New("Configuration unavailable")
-	}
-	cfg, err := config.Parse(bytes.NewReader(data))
-	if err != nil {
-		return SetupDocument{}, errors.New("Configuration unavailable")
-	}
-	values := make(map[string]string)
-	for id, probe := range cfg.Probes {
-		if probe.Type == "http" {
-			values[id] = string(probe.Value)
+	for attempt := 0; attempt < 3; attempt++ {
+		before, err := b.controller.service.Snapshot(ctx)
+		if err != nil {
+			return SetupDocument{}, errors.New("Configuration unavailable")
 		}
+		data, err := b.controller.service.ExportConfig(ctx)
+		if err != nil {
+			return SetupDocument{}, errors.New("Configuration unavailable")
+		}
+		after, err := b.controller.service.Snapshot(ctx)
+		if err != nil {
+			return SetupDocument{}, errors.New("Configuration unavailable")
+		}
+		if before.ConfigurationRevision != after.ConfigurationRevision {
+			continue
+		}
+		cfg, err := config.Parse(bytes.NewReader(data))
+		if err != nil {
+			return SetupDocument{}, errors.New("Configuration unavailable")
+		}
+		values := make(map[string]string)
+		for id, probe := range cfg.Probes {
+			if probe.Type == "http" {
+				values[id] = string(probe.Value)
+			}
+		}
+		return SetupDocument{Configuration: string(data), Comparisons: values, ConfigurationRevision: after.ConfigurationRevision}, nil
 	}
-	return SetupDocument{Configuration: string(data), Comparisons: values, ConfigurationRevision: snapshot.ConfigurationRevision}, nil
+	return SetupDocument{}, errors.New("Configuration unavailable")
 }
 
 func (b *StatusBridge) SetupApply(candidate string, expectedRevision uint64) (StatusView, error) {
