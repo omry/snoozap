@@ -45,6 +45,7 @@ type loop struct {
 	power                     model.PowerBackend
 	clock                     model.SchedulerClock
 	cfg                       config.Config
+	configurationRevision     uint64
 	snapshot                  model.Snapshot
 	probes                    map[string]*probeState
 	jobs                      map[string]*poll
@@ -371,6 +372,9 @@ func (l *loop) execute(cmd model.Command, now time.Duration) error {
 			l.snapshot.Deadline = &wall
 		}
 	case "monitor", "config":
+		if cmd.Operation == "config" && cmd.ConfigurationRevision != nil && *cmd.ConfigurationRevision != l.configurationRevision {
+			return model.ErrConfigurationChanged
+		}
 		candidate := l.cfg
 		if cmd.Operation == "monitor" {
 			if l.snapshot.ConfigurationError != "" {
@@ -394,6 +398,8 @@ func (l *loop) execute(cmd model.Command, now time.Duration) error {
 			return errors.New("configuration could not be persisted; prior settings remain active")
 		}
 		l.activate(candidate, now)
+		l.configurationRevision++
+		l.snapshot.ConfigurationRevision = l.configurationRevision
 		l.snapshot.ConfigurationError = ""
 	default:
 		return errors.New("unknown runtime operation")
@@ -413,7 +419,8 @@ func (e *Engine) run(ctx context.Context, power model.PowerBackend, clock model.
 			close(updates)
 		}
 	}()
-	l.snapshot = model.Snapshot{SchemaVersion: 1, Sequence: 1, Mode: model.Auto, Monitoring: true, UpdatedAt: clock.Now(), ConfigurationError: configError, Activity: model.Unknown, Limitations: []string{"An accepted request does not guarantee protection from explicit Sleep or lid close.", "Windows Modern Standby and battery policies can limit SystemRequired requests.", "SnooZap does not request that the display stay on."}}
+	l.snapshot = model.Snapshot{SchemaVersion: 1, Sequence: 1, ConfigurationRevision: 1, Mode: model.Auto, Monitoring: true, UpdatedAt: clock.Now(), ConfigurationError: configError, Activity: model.Unknown, Limitations: []string{"An accepted request does not guarantee protection from explicit Sleep or lid close.", "Windows Modern Standby and battery policies can limit SystemRequired requests.", "SnooZap does not request that the display stay on."}}
+	l.configurationRevision = 1
 	previous := l.view()
 	now := clock.Elapsed()
 	l.activate(options.Configuration, now)
