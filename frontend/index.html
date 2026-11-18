@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/wails/runtime.js"></script>
   <script type="module" src="/status.js"></script>
+  <script type="module" src="/setup.js"></script>
 </head>
 <body>
 <main>
@@ -37,6 +38,24 @@
       <div class="buttons"><button type="submit" disabled>Confirm duration</button><button type="button" id="cancel">Cancel</button></div>
     </form>
   <p id="error" role="alert"></p>
+  <nav aria-label="Maintenance views" class="buttons">
+    <button type="button" data-view="rules" aria-pressed="true" aria-controls="rules-panel">Rules</button>
+    <button type="button" data-view="history" aria-pressed="false" aria-controls="history-panel">History</button>
+    <button type="button" data-view="settings" aria-pressed="false" aria-controls="settings-panel">Settings</button>
+  </nav>
+  <form id="configuration" novalidate>
+    <fieldset id="configuration-fields" disabled>
+      <legend>Configuration draft</legend>
+      <section id="rules-panel" data-panel="rules" aria-label="Rules"></section>
+      <section id="settings-panel" data-panel="settings" aria-label="Settings" hidden></section>
+    </fieldset>
+    <div class="buttons">
+      <button type="submit" id="save-configuration" disabled>Save all changes</button>
+      <button type="button" id="reload-configuration">Discard drafts and reload</button>
+    </div>
+    <p id="setup-message" role="status" aria-live="polite"></p>
+  </form>
+  <section id="history-panel" data-panel="history" aria-label="History" hidden></section>
   <section aria-labelledby="limitations-title"><h2 id="limitations-title">Limitations</h2><ul id="limitations"><li>Runtime limitations unavailable</li></ul></section>
   <footer>Closing this window keeps SnooZap running in the notification area. Use Quit SnooZap in its tray menu to stop it.</footer>
 </main>

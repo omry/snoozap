@@ -1,7 +1,7 @@
 ---
 plan_key: snoozap
 slice_convention: hierarchical-v1
-slice_inventory: {"executable": false, "path": "slices.json", "sha256": "4108355c8635f4d863f748ce951e4390a28cd0424e7ca19600565221df008104"}
+slice_inventory: {"executable": false, "path": "slices.json", "sha256": "9ff526df0ea5ff96bdc3601eeefa3cb8c33a8d49f487b8741d05e4d4cedbd6d4"}
 ---
 # SnooZap implementation plan
 
@@ -602,7 +602,7 @@ dependencies and disposable probes. Do not use added-plus-removed edit churn.
 Shared foundations/tests are counted once in their owning Windows prerequisite.
 Every canonical slice has separate inclusive production/test line ranges.
 
-Project envelope: **11,130–17,910 production lines** and **12,400–20,080 test
+Project envelope: **11,760–18,760 production lines** and **13,080–21,080 test
 lines**. This includes a conditional Mac closed-lid envelope of 800–1,600 production
 and 900–1,800 test lines, not a chosen mechanism or a ready implementation task.
 The design investigation counts zero shipped/test code because it delivers
