@@ -44,14 +44,24 @@ slices remain in scope; no release publication or hardware acceptance is implied
 <!-- awd:slice-table:start -->
 | Status | Slice ID | Short description | Production lines | Test lines |
 | --- | --- | --- | ---: | ---: |
-| ⏳ Pending | `snoozap/1` | Usable Windows manual console control | 650–950 | 700–1,100 |
-| ⏳ Pending | `snoozap/2` | Application rules, battery and timed controls | 800–1,200 | 1,100–1,650 |
-| ⏳ Pending | `snoozap/3` | Safe settings, credentials and diagnostics | 650–1,000 | 550–900 |
-| ⏳ Pending | `snoozap/4` | One per-user owner and local command interface | 650–1,000 | 650–1,000 |
-| ⏳ Pending | `snoozap/5` | T3 OAuth and local Windows/WSL probes | 1,000–1,500 | 1,000–1,600 |
-| ⏳ Pending | `snoozap/6` | Typed HTTP checks and probe scheduling | 450–700 | 550–850 |
-| ⏳ Pending | `snoozap/7` | Tray and status window usable without setup | 650–1,000 | 500–800 |
-| ⏳ Pending | `snoozap/8` | Add T3/apps, edit rules and inspect history | 850–1,350 | 700–1,100 |
+| ✅ Done | `snoozap/1` | Usable Windows manual console control | 650–950 | 700–1,100 |
+| ✅ Done | `snoozap/2` | Application rules, battery and timed controls | 800–1,200 | 1,100–1,650 |
+| ✅ Done | `snoozap/3` | Safe settings, credentials and diagnostics | 650–1,000 | 550–900 |
+| ✅ Done | `snoozap/4` | One per-user owner and local command interface | 650–1,000 | 650–1,000 |
+| ↪ Replaced | `snoozap/5` | T3 OAuth and local Windows/WSL probes | 1,000–1,500 | 1,000–1,600 |
+| ✅ Done | `snoozap/5.1` | T3 OAuth and local Windows/WSL probes | 1,000–1,500 | 1,000–1,600 |
+| ↪ Replaced | `snoozap/6` | Typed HTTP checks and probe scheduling | 450–700 | 550–850 |
+| ✅ Done | `snoozap/6.1` | Typed HTTP checks and probe scheduling | 450–700 | 550–850 |
+| ↪ Replaced | `snoozap/7` | Tray and status window usable without setup | 650–1,000 | 500–800 |
+| ✅ Done | `snoozap/7.1` | Direct native tray controls sharing the existing runtime | 450–650 | 350–550 |
+| ✅ Done | `snoozap/19` | Cross-platform build and automated test CI | 30–60 | 100–180 |
+| ↪ Replaced | `snoozap/7.2` | Accessible status window using the delivered tray and Service | 400–650 | 350–550 |
+| ✅ Done | `snoozap/7.2.1` | Accessible status window with exact-origin Service isolation | 450–750 | 450–750 |
+| ↪ Replaced | `snoozap/8` | Add T3/apps, edit rules and inspect history | 850–1,350 | 700–1,100 |
+| 🔄 Active | `snoozap/8.1` | Edit rules, settings and safe history in the desktop | 650–950 | 600–900 |
+| ⏳ Pending | `snoozap/8.2` | Add local applications and authorize T3 from the desktop | 650–950 | 600–900 |
+| ⏳ Pending | `snoozap/8.3` | Control current-user Windows startup from Settings | 180–300 | 180–300 |
+| ⏳ Pending | `snoozap/8.4` | Reject stale desktop configuration saves | 120–260 | 180–360 |
 | ⏳ Pending | `snoozap/9` | TUI with the same status and manual controls | 600–950 | 500–850 |
 | ⏳ Pending | `snoozap/10` | Optional LAN targets and truthful wake outcomes | 850–1,300 | 850–1,300 |
 | ⏳ Pending | `snoozap/11` | Wake-only page through existing Tailscale Serve | 700–1,100 | 750–1,150 |
@@ -62,5 +72,5 @@ slices remain in scope; no release publication or hardware acceptance is implied
 | ⏳ Pending | `snoozap/16` | Mac app/CLI and physical platform acceptance | 250–500 | 600–1,000 |
 | ⏳ Pending | `snoozap/17` | Linux inhibitors, credentials and desktop integration | 700–1,150 | 650–1,050 |
 | ⏳ Pending | `snoozap/18` | Linux release and full-project acceptance | 250–500 | 650–1,100 |
-| | **Project total** | Current slices; replaced parents excluded. | **10,850–17,450** | **12,000–19,400** |
+| | **Project total** | Current slices; replaced parents excluded. | **11,880–19,020** | **13,260–21,440** |
 <!-- awd:slice-table:end -->

@@ -1,7 +1,7 @@
 ---
 plan_key: snoozap
 slice_convention: hierarchical-v1
-slice_inventory: {"executable": false, "path": "slices.json", "sha256": "9ff526df0ea5ff96bdc3601eeefa3cb8c33a8d49f487b8741d05e4d4cedbd6d4"}
+slice_inventory: {"executable": false, "path": "slices.json", "sha256": "33479d2b95484f037df6d69f52a0073220b50186b80a587533b6e2213b5c148c"}
 ---
 # SnooZap implementation plan
 
@@ -613,7 +613,7 @@ slice cap, time estimate or new accounting mechanism.
 Windows slices 1–12 and the intervening CI slice 19 are authorized for delivery
 under the retained campaign,
 subject to their explicit engineering, current review and physical acceptance
-prerequisites. This authority does not permit merge or release.
+prerequisites. Slice 8.4 is a required follow-up to 8.1. It owns the shared revision fields needed to reject stale desktop configuration saves before 8.2 proceeds. This authority does not permit merge or release.
 Slice 13 requires completed Windows and real Mac access. Slices 15–16 are not ready
 until the retained Mac mechanism decision, updated engineering and renewed affected
 review/approval exist. Linux slices 17–18 depend on complete Mac delivery. The
