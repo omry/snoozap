@@ -20,6 +20,7 @@ import (
 
 	"github.com/omry/snoozap/frontend"
 	"github.com/omry/snoozap/internal/app"
+	"github.com/omry/snoozap/internal/config"
 	"github.com/omry/snoozap/internal/ipc"
 	"github.com/omry/snoozap/internal/model"
 	"github.com/omry/snoozap/internal/platform/windows"
@@ -111,7 +112,7 @@ func (c *Controller) publish(s model.Snapshot, message string, finish bool) {
 // Execute never queues or replays a mutation. A later snapshot reconciles an
 // uncertain result. The engine remains the authority for validation and policy.
 func (c *Controller) Execute(cmd model.Command) error {
-	if cmd.Operation != "mode" && cmd.Operation != "stop" {
+	if (cmd.Operation != "mode" && cmd.Operation != "stop" && cmd.Operation != "config") || (cmd.Operation == "config" && cmd.Configuration == nil) {
 		return model.ErrInvalidInput
 	}
 	if !c.command.TryLock() {
@@ -156,7 +157,8 @@ func (c *Controller) Close() error {
 }
 
 // StatusBridge is the entire web-facing Service surface. In particular, the
-// Controller, runtime shutdown, configuration and general dispatch are unbound.
+// Controller, runtime shutdown and general dispatch are unbound. Configuration
+// and history use only the explicit bounded maintenance methods in setup.go.
 // Private state travels only in the requesting document's HTTP response.
 type StatusBridge struct{ controller *Controller }
 
@@ -194,8 +196,8 @@ const statusOrigin = "http://wails.localhost"
 const statusMethodPrefix = "github.com/omry/snoozap/internal/desktop.StatusBridge."
 
 // StatusMiddleware precedes every Wails middleware. CORS and window IDs are
-// not authorization. Deny all framework operations except these two bindings;
-// canonicalise their small envelopes before the framework parses them again.
+// not authorization. Deny all framework operations except the explicit bindings;
+// canonicalise their bounded envelopes before the framework parses them again.
 func StatusMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'none'")
@@ -227,19 +229,28 @@ func StatusMiddleware(next http.Handler) http.Handler {
 					Values []json.RawMessage `json:"args"`
 				} `json:"args"`
 			}
-			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+			// A full configuration is at most 1 MiB. JSON string quoting can
+			// double its size; other operations retain the original small bound.
+			raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2*config.MaxBytes+4096))
+			if err != nil || config.ValidateJSONEncoding(raw) != nil {
+				http.Error(w, "Invalid application request", http.StatusForbidden)
+				return
+			}
+			decoder := json.NewDecoder(bytes.NewReader(raw))
 			decoder.DisallowUnknownFields()
 			err = decoder.Decode(&call)
 			var extra any
 			if err != nil || decoder.Decode(&extra) != io.EOF || call.Object == nil || *call.Object != 0 || call.Method == nil || *call.Method != 0 || len(call.Args.ID) == 0 || len(call.Args.ID) > 64 ||
-				!(call.Args.Name == statusMethodPrefix+"Read" && len(call.Args.Values) == 0 || call.Args.Name == statusMethodPrefix+"Mode" && len(call.Args.Values) == 2) {
+				!(call.Args.Name == statusMethodPrefix+"Read" && len(call.Args.Values) == 0 || call.Args.Name == statusMethodPrefix+"Mode" && len(call.Args.Values) == 2 ||
+					(call.Args.Name == statusMethodPrefix+"SetupRead" || call.Args.Name == statusMethodPrefix+"HistoryRead" || call.Args.Name == statusMethodPrefix+"HistoryClear") && len(call.Args.Values) == 0 ||
+					call.Args.Name == statusMethodPrefix+"SetupApply" && len(call.Args.Values) == 1) || call.Args.Name != statusMethodPrefix+"SetupApply" && len(raw) > 4096 {
 				http.Error(w, "Unavailable application operation", http.StatusForbidden)
 				return
 			}
 			body, _ := json.Marshal(call)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			r.ContentLength = int64(len(body))
-		case "/", "/index.html", "/status.js", "/styles.css", "/wails/runtime.js", "/wails/transport.js":
+		case "/", "/index.html", "/status.js", "/setup.js", "/rules.js", "/history.js", "/settings.js", "/styles.css", "/wails/runtime.js", "/wails/transport.js":
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				http.Error(w, "Read-only asset", http.StatusMethodNotAllowed)
 				return

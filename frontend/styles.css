@@ -19,6 +19,16 @@ button[aria-pressed="true"]::before { content: "✓ "; }
 button:disabled { cursor: default; opacity: .6; }
 :focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
 input { display: block; width: 100%; }
+select { display: block; width: 100%; font: inherit; color: inherit; background: Canvas; border: 1px solid ButtonText; border-radius: .3rem; padding: .5rem .75rem; }
+input[type="checkbox"] { display: inline-block; width: auto; margin-left: .75rem; }
+#configuration label { display: block; margin: .75rem 0; overflow-wrap: anywhere; }
+#configuration input, #configuration select { max-width: 100%; }
+[hidden] { display: none !important; }
+.expression { margin: .75rem 0; border-left-width: .25rem; }
+#history-panel { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+th, td { text-align: left; vertical-align: top; padding: .5rem; border-bottom: 1px solid GrayText; overflow-wrap: anywhere; }
+#setup-message { min-height: 1.5em; }
 form { border-top: 1px solid GrayText; margin-top: 1rem; padding-top: 1rem; }
 #duration-help, footer { font-size: .9rem; }
 #error { min-height: 1.5em; font-weight: 600; }

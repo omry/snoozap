@@ -4,5 +4,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"], "strict": true,
     "outDir": "dist", "noEmitOnError": true
   },
-  "include": ["status.ts"]
+  "include": ["status.ts", "setup.ts", "rules.ts", "history.ts", "settings.ts"]
 }
