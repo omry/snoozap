@@ -81,7 +81,12 @@ export function mountSetup(doc: Document, fetcher: (url: string, init: RequestIn
     void (async () => {
       busy = true; fields.disabled = true; save.disabled = true; reload.disabled = true;
       try {
-        await call("SetupApply", [writeDraft(draft!), configurationRevision]);
+        const result = await call("SetupApply", [writeDraft(draft!), configurationRevision]) as {
+          State?: { Snapshot?: { configuration_revision?: number } };
+        };
+        const nextRevision = result.State?.Snapshot?.configuration_revision;
+        if (typeof nextRevision !== "number" || !Number.isSafeInteger(nextRevision) || nextRevision < 0) throw Error("Save revision unavailable");
+        configurationRevision = nextRevision;
         if (!stopped) { dirty = false; message.textContent = "Configuration saved. Selected mode and timer are unchanged."; }
       } catch { if (!stopped) message.textContent = "Save not confirmed. Settings changed elsewhere or the candidate was rejected. Your draft is retained. Reload before trying again."; }
       finally { busy = false; if (!stopped) { fields.disabled = false; save.disabled = false; reload.disabled = false; } }
