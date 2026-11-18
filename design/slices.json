@@ -616,6 +616,46 @@
       }
     },
     {
+      "id": "snoozap/8.4",
+      "parent": "snoozap/8",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/8.4] Reject stale desktop configuration saves",
+        "responsibility": "Protect full-configuration desktop saves with an owner-side configuration revision. The editor sends the revision it read, the engine and local IPC reject stale candidates atomically, and the desktop retains the draft while asking the user to reload. Preserve newer monitoring, rules and battery settings. This follow-up owns the shared engine, model and IPC fields required by the existing desktop editor and does not add new configuration behavior.",
+        "paths": [
+          "frontend/history.ts",
+          "frontend/setup.ts",
+          "internal/desktop/app.go",
+          "internal/desktop/setup.go",
+          "internal/engine/engine.go",
+          "internal/ipc/protocol.go",
+          "internal/ipc/protocol_test.go",
+          "internal/model/model.go",
+          "tests/windows/setup_test.go"
+        ],
+        "dependencies": [
+          "snoozap/8.1"
+        ],
+        "acceptance": [
+          "A desktop save made from an old configuration revision is rejected without changing the active configuration or manual deadline, and the draft remains available for reload.",
+          "A current revision saves through both the direct owner and local IPC paths, while monitoring changes made after the editor loaded are preserved.",
+          "Windows setup and IPC tests cover the conflict, current-save, serialization and user-facing draft-retention behavior."
+        ]
+      },
+      "display": {
+        "summary": "Reject stale desktop configuration saves",
+        "production": [
+          120,
+          260
+        ],
+        "tests": [
+          180,
+          360
+        ]
+      }
+    },
+    {
       "id": "snoozap/8.2",
       "parent": "snoozap/8",
       "state": "planned",
@@ -638,7 +678,7 @@
           "internal/ipc/protocol_test.go"
         ],
         "dependencies": [
-          "snoozap/8.1"
+          "snoozap/8.4"
         ],
         "acceptance": [
           "Application selection cancellation preserves configuration and timer; native/WSL choices produce the intended enabled rule and explain the WSL preflight race",
