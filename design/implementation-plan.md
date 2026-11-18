@@ -613,7 +613,7 @@ slice cap, time estimate or new accounting mechanism.
 Windows slices 1–12 and the intervening CI slice 19 are authorized for delivery
 under the retained campaign,
 subject to their explicit engineering, current review and physical acceptance
-prerequisites. Slice 8.4 is a required follow-up to 8.1. It owns the shared revision fields needed to reject stale desktop configuration saves before 8.2 proceeds. This authority does not permit merge or release.
+prerequisites. Slice 8.4 is a required follow-up to 8.1. It owns the shared revision fields needed to reject stale desktop configuration saves. This authority does not permit merge or release.
 Slice 13 requires completed Windows and real Mac access. Slices 15–16 are not ready
 until the retained Mac mechanism decision, updated engineering and renewed affected
 review/approval exist. Linux slices 17–18 depend on complete Mac delivery. The

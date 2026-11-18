@@ -678,7 +678,7 @@
           "internal/ipc/protocol_test.go"
         ],
         "dependencies": [
-          "snoozap/8.4"
+          "snoozap/8.1"
         ],
         "acceptance": [
           "Application selection cancellation preserves configuration and timer; native/WSL choices produce the intended enabled rule and explain the WSL preflight race",
