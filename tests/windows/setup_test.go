@@ -52,6 +52,15 @@ func setupBridge(t *testing.T, options engine.Options) (*desktop.StatusBridge, *
 	return desktop.NewStatusBridge(controller), controller, service
 }
 
+func setupRevision(t *testing.T, service model.Service) uint64 {
+	t.Helper()
+	snapshot, err := service.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot.ConfigurationRevision
+}
+
 func TestSetupFullCandidatePreservesExactConfigAndManualDeadline(t *testing.T) {
 	cfg := setupConfig(t)
 	var saved []byte
@@ -73,8 +82,8 @@ func TestSetupFullCandidatePreservesExactConfigAndManualDeadline(t *testing.T) {
 	loaded.Settings.Battery.FloorPercent = 30
 	loaded.Settings.Battery.ResumePercent = 40
 	data, _ := config.Export(loaded)
-	view, err := bridge.SetupApply(string(data))
-	if err != nil || view.State.Snapshot.Monitoring || view.State.Snapshot.Mode != model.Awake || !view.State.Snapshot.Deadline.Equal(*manual.State.Snapshot.Deadline) || !view.State.Snapshot.NativeRequestAccepted {
+	view, err := bridge.SetupApply(string(data), doc.ConfigurationRevision)
+	if err != nil || view.State.Snapshot.ConfigurationRevision != doc.ConfigurationRevision+1 || view.State.Snapshot.Monitoring || view.State.Snapshot.Mode != model.Awake || !view.State.Snapshot.Deadline.Equal(*manual.State.Snapshot.Deadline) || !view.State.Snapshot.NativeRequestAccepted {
 		t.Fatal("apply changed manual mode/deadline or did not apply monitoring", view, err)
 	}
 	persisted, err := config.Parse(bytes.NewReader(saved))
@@ -106,12 +115,12 @@ func TestSetupInvalidOrUnpersistedCandidateKeepsOldConfigAndTimer(t *testing.T) 
 		strings.Repeat(" ", config.MaxBytes+1),
 	}
 	for i, candidate := range invalid {
-		view, err := bridge.SetupApply(candidate)
+		view, err := bridge.SetupApply(candidate, setupRevision(t, service))
 		if err == nil || writes != 0 || view.State.Snapshot.Mode != model.Awake || !view.State.Snapshot.Deadline.Equal(*manual.State.Snapshot.Deadline) {
 			t.Fatal("invalid candidate mutated owner", i, view, writes, err)
 		}
 	}
-	view, err := bridge.SetupApply(strings.Replace(setupConfiguration, `"monitoring":true`, `"monitoring":false`, 1))
+	view, err := bridge.SetupApply(strings.Replace(setupConfiguration, `"monitoring":true`, `"monitoring":false`, 1), setupRevision(t, service))
 	if err == nil || writes != 1 || !view.State.Snapshot.Monitoring || !view.State.Snapshot.Deadline.Equal(*manual.State.Snapshot.Deadline) {
 		t.Fatal("failed persistence changed active config/timer", view, err)
 	}
@@ -123,7 +132,7 @@ func TestSetupInvalidOrUnpersistedCandidateKeepsOldConfigAndTimer(t *testing.T) 
 
 func TestSetupMonitoringAndBatteryEffectsRemainEngineOwned(t *testing.T) {
 	percent := 35
-	bridge, _, _ := setupBridge(t, engine.Options{Configuration: config.Empty(), Save: func(config.Config) error { return nil }, ReadPower: func(context.Context) (model.Battery, error) {
+	bridge, _, service := setupBridge(t, engine.Options{Configuration: config.Empty(), Save: func(config.Config) error { return nil }, ReadPower: func(context.Context) (model.Battery, error) {
 		return model.Battery{Source: "battery", Present: true, Known: true, Percent: &percent}, nil
 	}})
 	manual, err := bridge.Mode(model.Awake, "1h")
@@ -135,14 +144,14 @@ func TestSetupMonitoringAndBatteryEffectsRemainEngineOwned(t *testing.T) {
 	cfg.Settings.Battery.FloorPercent = 40
 	cfg.Settings.Battery.ResumePercent = 45
 	data, _ := config.Export(cfg)
-	view, err := bridge.SetupApply(string(data))
+	view, err := bridge.SetupApply(string(data), setupRevision(t, service))
 	if err != nil || view.State.Snapshot.Monitoring || view.State.Snapshot.NativeRequestActive || view.State.Snapshot.Mode != model.Awake || !view.State.Snapshot.Deadline.Equal(*manual.State.Snapshot.Deadline) {
 		t.Fatal("battery suppression did not retain manual selection", view, err)
 	}
 	cfg.Settings.Battery.FloorPercent = 10
 	cfg.Settings.Battery.ResumePercent = 15
 	data, _ = config.Export(cfg)
-	view, err = bridge.SetupApply(string(data))
+	view, err = bridge.SetupApply(string(data), setupRevision(t, service))
 	if err != nil || !view.State.Snapshot.NativeRequestAccepted || view.State.Snapshot.Monitoring {
 		t.Fatal("monitoring off disabled manual hold", view, err)
 	}
@@ -155,7 +164,7 @@ func TestSetupMonitoringAndBatteryEffectsRemainEngineOwned(t *testing.T) {
 func TestSetupHistoryUsesOwnerRedactionAndClearPreservesTimer(t *testing.T) {
 	bridge, _, service := setupBridge(t, engine.Options{Configuration: setupConfig(t), Save: func(config.Config) error { return nil }})
 	manual, _ := bridge.Mode(model.Awake, "1h")
-	if _, err := bridge.SetupApply(setupConfiguration); err != nil {
+	if _, err := bridge.SetupApply(setupConfiguration, setupRevision(t, service)); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := service.Snapshot(context.Background())
@@ -178,7 +187,41 @@ func TestSetupHistoryUsesOwnerRedactionAndClearPreservesTimer(t *testing.T) {
 	}
 }
 
+func TestSetupRejectsStaleDraftAfterMonitoringChanges(t *testing.T) {
+	bridge, _, service := setupBridge(t, engine.Options{Configuration: setupConfig(t), Save: func(config.Config) error { return nil }})
+	doc, err := bridge.SetupRead()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bridge.Mode(model.Awake, "1h"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Execute(context.Background(), model.Command{Operation: "monitor", Monitoring: false}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := bridge.SetupApply(doc.Configuration, doc.ConfigurationRevision)
+	if !errors.Is(err, model.ErrConfigurationChanged) {
+		t.Fatalf("stale save error = %v", err)
+	}
+	if view.State.Snapshot.Monitoring {
+		t.Fatal("stale save re-enabled monitoring")
+	}
+}
+
 type setupFailingService struct{ model.Service }
+
+type setupChangingSnapshotService struct {
+	model.Service
+	changed atomic.Bool
+}
+
+func (s *setupChangingSnapshotService) Snapshot(ctx context.Context) (model.Snapshot, error) {
+	snapshot, err := s.Service.Snapshot(ctx)
+	if err == nil && s.changed.CompareAndSwap(false, true) {
+		_, _ = s.Service.Execute(ctx, model.Command{Operation: "monitor", Monitoring: false})
+	}
+	return snapshot, err
+}
 
 func (setupFailingService) ExportConfig(context.Context) ([]byte, error) {
 	return nil, errors.New("SECRET")
@@ -200,6 +243,23 @@ func TestSetupReadAndClearFailuresDoNotExposeRawErrors(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "SECRET") {
 			t.Fatal("raw service error leaked", err)
 		}
+	}
+}
+
+func TestSetupReadRetriesWhenConfigurationChangesDuringExport(t *testing.T) {
+	base := engine.New(context.Background(), &trayPower{}, nil, "", engine.Options{Configuration: setupConfig(t), Save: func(config.Config) error { return nil }})
+	service := &setupChangingSnapshotService{Service: base}
+	controller := desktop.NewController(context.Background(), service, func(desktop.State) {})
+	t.Cleanup(func() { _ = controller.Close() })
+	document, err := desktop.NewStatusBridge(controller).SetupRead()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.ConfigurationRevision != 2 {
+		t.Fatalf("revision = %d, want 2", document.ConfigurationRevision)
+	}
+	if strings.Contains(document.Configuration, `"monitoring":true`) {
+		t.Fatal("read returned configuration from before the revision change")
 	}
 }
 
@@ -296,7 +356,7 @@ func TestSetupGuardBindsOnlyExactMaintenanceOperations(t *testing.T) {
 			for _, arityOK := range []bool{true, false} {
 				args := []any{}
 				if method == "SetupApply" {
-					args = append(args, setupConfiguration)
+					args = append(args, setupConfiguration, uint64(1))
 				}
 				if !arityOK {
 					args = append(args, "extra")
@@ -322,7 +382,7 @@ func TestSetupGuardBindsOnlyExactMaintenanceOperations(t *testing.T) {
 			t.Fatal(path, out.Code)
 		}
 	}
-	for _, body := range []string{statusCall("SetupApply", strings.Repeat("x", 2*config.MaxBytes+4096)), strings.Replace(statusCall("SetupApply", "x"), `"x"`, `"\ud800"`, 1)} {
+	for _, body := range []string{statusCall("SetupApply", strings.Repeat("x", 2*config.MaxBytes+4096), uint64(1)), strings.Replace(statusCall("SetupApply", "x", uint64(1)), `"x"`, `"\ud800"`, 1)} {
 		h := desktop.StatusMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("malformed/oversized dispatch") }))
 		r := httptest.NewRequest("POST", "http://wails.localhost/wails/runtime", strings.NewReader(body))
 		r.Header.Set("Origin", "http://wails.localhost")
