@@ -20,10 +20,11 @@ const (
 func (m Mode) Valid() bool { return m == Auto || m == Awake || m == AllowSleep }
 
 var (
-	ErrStopped      = errors.New("runtime stopped")
-	ErrNoInstance   = errors.New("no running SnooZap instance")
-	ErrInvalidInput = errors.New("invalid command or configuration")
-	ErrUnavailable  = errors.New("operation unavailable")
+	ErrStopped              = errors.New("runtime stopped")
+	ErrNoInstance           = errors.New("no running SnooZap instance")
+	ErrInvalidInput         = errors.New("invalid command or configuration")
+	ErrUnavailable          = errors.New("operation unavailable")
+	ErrConfigurationChanged = errors.New("configuration changed while editing")
 )
 
 type Clock interface{ Now() time.Time }
@@ -86,11 +87,12 @@ const (
 )
 
 type Command struct {
-	Operation     string
-	Mode          Mode
-	Duration      time.Duration
-	Monitoring    bool
-	Configuration *config.Config
+	Operation             string
+	Mode                  Mode
+	Duration              time.Duration
+	Monitoring            bool
+	Configuration         *config.Config
+	ConfigurationRevision *string
 }
 type Hold struct {
 	Requested  bool     `json:"requested"`
@@ -111,17 +113,18 @@ type RuleStatus struct {
 	Startup  bool   `json:"startup"`
 }
 type Snapshot struct {
-	SchemaVersion int           `json:"schema_version"`
-	Sequence      uint64        `json:"sequence"`
-	Mode          Mode          `json:"mode"`
-	Monitoring    bool          `json:"monitoring"`
-	Activity      State         `json:"activity"`
-	Hold          Hold          `json:"hold"`
-	Battery       Battery       `json:"battery"`
-	Probes        []ProbeStatus `json:"probes"`
-	Rules         []RuleStatus  `json:"rules"`
-	Deadline      *time.Time    `json:"deadline"`
-	RemainingMS   int64         `json:"remaining_ms"`
+	SchemaVersion         int           `json:"schema_version"`
+	Sequence              uint64        `json:"sequence"`
+	ConfigurationRevision string        `json:"configuration_revision"`
+	Mode                  Mode          `json:"mode"`
+	Monitoring            bool          `json:"monitoring"`
+	Activity              State         `json:"activity"`
+	Hold                  Hold          `json:"hold"`
+	Battery               Battery       `json:"battery"`
+	Probes                []ProbeStatus `json:"probes"`
+	Rules                 []RuleStatus  `json:"rules"`
+	Deadline              *time.Time    `json:"deadline"`
+	RemainingMS           int64         `json:"remaining_ms"`
 	// Retain the delivered console's indicators; they describe this same hold.
 	DesiredHold           bool      `json:"desired_hold"`
 	NativeRequestActive   bool      `json:"native_request_active"`

@@ -255,11 +255,22 @@ func execute(ctx context.Context, s model.Service, r request) (any, *wireError) 
 		}
 		v, err = s.Execute(ctx, model.Command{Operation: "monitor", Monitoring: *a.Enabled})
 	case "config":
-		cfg, e := config.Parse(bytes.NewReader(r.Args))
+		var a struct {
+			Configuration         json.RawMessage `json:"configuration"`
+			ConfigurationRevision *string         `json:"configuration_revision"`
+		}
+		configuration := r.Args
+		var revision *string
+		if len(r.Args) > 0 && r.Args[0] == '{' {
+			if decode(r.Args, &a) == nil && len(a.Configuration) > 0 {
+				configuration, revision = a.Configuration, a.ConfigurationRevision
+			}
+		}
+		cfg, e := config.Parse(bytes.NewReader(configuration))
 		if e != nil {
 			return nil, invalid
 		}
-		v, err = s.Execute(ctx, model.Command{Operation: "config", Configuration: &cfg})
+		v, err = s.Execute(ctx, model.Command{Operation: "config", Configuration: &cfg, ConfigurationRevision: revision})
 	default:
 		return nil, &wireError{"unavailable", "Unknown or unavailable local operation"}
 	}
@@ -503,7 +514,10 @@ func (c *Client) Execute(ctx context.Context, cmd model.Command) (model.Snapshot
 		if cmd.Configuration == nil || config.Validate(*cmd.Configuration) != nil {
 			return s, model.ErrInvalidInput
 		}
-		args = cmd.Configuration
+		args = struct {
+			Configuration         *config.Config `json:"configuration"`
+			ConfigurationRevision *string        `json:"configuration_revision,omitempty"`
+		}{cmd.Configuration, cmd.ConfigurationRevision}
 	default:
 		return s, model.ErrUnavailable
 	}

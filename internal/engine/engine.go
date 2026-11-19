@@ -2,10 +2,12 @@ package engine
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"math"
 	"reflect"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/omry/snoozap/internal/config"
@@ -45,6 +47,8 @@ type loop struct {
 	power                     model.PowerBackend
 	clock                     model.SchedulerClock
 	cfg                       config.Config
+	configurationRevision     uint64
+	configurationOwner        string
 	snapshot                  model.Snapshot
 	probes                    map[string]*probeState
 	jobs                      map[string]*poll
@@ -371,6 +375,9 @@ func (l *loop) execute(cmd model.Command, now time.Duration) error {
 			l.snapshot.Deadline = &wall
 		}
 	case "monitor", "config":
+		if cmd.Operation == "config" && cmd.ConfigurationRevision != nil && *cmd.ConfigurationRevision != l.snapshot.ConfigurationRevision {
+			return model.ErrConfigurationChanged
+		}
 		candidate := l.cfg
 		if cmd.Operation == "monitor" {
 			if l.snapshot.ConfigurationError != "" {
@@ -394,6 +401,8 @@ func (l *loop) execute(cmd model.Command, now time.Duration) error {
 			return errors.New("configuration could not be persisted; prior settings remain active")
 		}
 		l.activate(candidate, now)
+		l.configurationRevision++
+		l.snapshot.ConfigurationRevision = l.configurationOwner + ":" + strconv.FormatUint(l.configurationRevision, 10)
 		l.snapshot.ConfigurationError = ""
 	default:
 		return errors.New("unknown runtime operation")
@@ -414,6 +423,9 @@ func (e *Engine) run(ctx context.Context, power model.PowerBackend, clock model.
 		}
 	}()
 	l.snapshot = model.Snapshot{SchemaVersion: 1, Sequence: 1, Mode: model.Auto, Monitoring: true, UpdatedAt: clock.Now(), ConfigurationError: configError, Activity: model.Unknown, Limitations: []string{"An accepted request does not guarantee protection from explicit Sleep or lid close.", "Windows Modern Standby and battery policies can limit SystemRequired requests.", "SnooZap does not request that the display stay on."}}
+	l.configurationOwner = rand.Text()
+	l.configurationRevision = 1
+	l.snapshot.ConfigurationRevision = l.configurationOwner + ":1"
 	previous := l.view()
 	now := clock.Elapsed()
 	l.activate(options.Configuration, now)
