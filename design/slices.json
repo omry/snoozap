@@ -616,9 +616,49 @@
       }
     },
     {
-      "id": "snoozap/8.2",
+      "id": "snoozap/8.4",
       "parent": "snoozap/8",
       "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/8.4] Reject stale desktop configuration saves",
+        "responsibility": "Protect full-configuration desktop saves with an owner-side configuration revision. The editor sends the revision it read, the engine and local IPC reject stale candidates atomically, and the desktop retains the draft while asking the user to reload. Preserve newer monitoring, rules and battery settings. This follow-up owns the shared engine, model and IPC fields required by the existing desktop editor and does not add new configuration behavior.",
+        "paths": [
+          "frontend/history.ts",
+          "frontend/setup.ts",
+          "internal/desktop/app.go",
+          "internal/desktop/setup.go",
+          "internal/engine/engine.go",
+          "internal/ipc/protocol.go",
+          "internal/ipc/protocol_test.go",
+          "internal/model/model.go",
+          "tests/windows/setup_test.go"
+        ],
+        "dependencies": [
+          "snoozap/8.1"
+        ],
+        "acceptance": [
+          "A desktop save made from an old configuration revision is rejected without changing the active configuration or manual deadline, and the draft remains available for reload.",
+          "A current revision saves through both the direct owner and local IPC paths, while monitoring changes made after the editor loaded are preserved.",
+          "Windows setup and IPC tests cover the conflict, current-save, serialization and user-facing draft-retention behavior."
+        ]
+      },
+      "display": {
+        "summary": "Reject stale desktop configuration saves",
+        "production": [
+          120,
+          260
+        ],
+        "tests": [
+          180,
+          360
+        ]
+      }
+    },
+    {
+      "id": "snoozap/8.2",
+      "parent": "snoozap/8",
+      "state": "replaced",
       "role": "implementation",
       "intent": {
         "title": "[snoozap/8.2] Add local applications and authorize T3 from the desktop",
@@ -658,6 +698,91 @@
       }
     },
     {
+      "id": "snoozap/8.2.1",
+      "parent": "snoozap/8.2",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/8.2.1] Add local application rules from the desktop",
+        "responsibility": "Deliver Add application on the existing editor using current-user native application selection or an explicitly selected supported local WSL distribution. Explain the accepted stop-after-preflight race. Own the bounded setup/test operation plumbing through the owning runtime, local IPC and exact-origin desktop bridge once; preserve the existing strict operation allowlist. One-shot application Test uses existing adapters without another scheduler, enabling a rule or acquiring a hold. Apply the validated candidate with the configuration revision from the current draft, retaining the stale-save protection from 8.4. Cancellation, failed preflight, invalid candidates and stale applies preserve configuration and manual deadline; success creates one understandable enabled application rule with its failure policy. No T3 authorization, remote environments, general command dispatcher or arbitrary scripts.",
+        "paths": [
+          "frontend/setup.ts",
+          "frontend/setup.test.ts",
+          "internal/desktop/setup.go",
+          "internal/desktop/app.go",
+          "internal/app/windows.go",
+          "internal/model/model.go",
+          "internal/ipc/protocol.go",
+          "internal/ipc/windows.go",
+          "internal/platform/windows/process.go",
+          "internal/platform/windows/wsl.go",
+          "tests/windows/setup_test.go",
+          "internal/ipc/protocol_test.go"
+        ],
+        "dependencies": [
+          "snoozap/8.1",
+          "snoozap/8.4"
+        ],
+        "acceptance": [
+          "Application selection cancellation preserves configuration and timer; native/WSL choices produce the intended enabled rule and explain the WSL preflight race.",
+          "The bounded application setup and one-shot Test work with console-owned and tray-owned runtimes through the existing restricted IPC/bridge; Test does not enable rules or acquire a hold.",
+          "Invalid and stale candidate applies preserve newer configuration, the draft and the active manual deadline."
+        ]
+      },
+      "display": {
+        "summary": "Add native and WSL application rules from the desktop",
+        "production": [
+          250,
+          350
+        ],
+        "tests": [
+          220,
+          330
+        ]
+      }
+    },
+    {
+      "id": "snoozap/8.2.2",
+      "parent": "snoozap/8.2",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[snoozap/8.2.2] Authorize local T3 rules from the desktop",
+        "responsibility": "Deliver Add T3 on the existing editor by reusing the bounded owner/IPC/bridge setup and one-shot Test plumbing delivered in 8.2.1. Use existing T3 Registry.Setup, verified local endpoint/environment identity, protected credential/binding storage and system-browser OAuth. One-shot T3 Test uses the existing adapter without another scheduler, enabling a rule or acquiring a hold. Retain the 8.4 configuration-revision precondition for final candidate apply. Sign-in refusal, timeout, cancellation, identity/storage failure and invalid or stale apply preserve configuration and manual deadline and clean temporary secrets/bindings safely. Success creates one understandable enabled verified local T3 rule with its failure policy. Do not duplicate application selection or shared operation plumbing. No remote environments, general command dispatcher or arbitrary scripts.",
+        "paths": [
+          "frontend/setup.ts",
+          "frontend/setup.test.ts",
+          "internal/desktop/setup.go",
+          "internal/desktop/app.go",
+          "internal/app/windows.go",
+          "internal/model/model.go",
+          "internal/ipc/protocol.go",
+          "internal/ipc/windows.go",
+          "tests/windows/setup_test.go",
+          "internal/ipc/protocol_test.go"
+        ],
+        "dependencies": [
+          "snoozap/8.2.1"
+        ],
+        "acceptance": [
+          "T3 refusal, timeout, cancellation, identity or credential-store failure preserve the old rule set and timer; success commits one enabled verified local rule.",
+          "System-browser authorization, verified local identity and protected storage work with console-owned and tray-owned runtimes; temporary setup resources are cleaned after cancellation or failed candidate apply.",
+          "One-shot T3 Test does not enable a rule or acquire a hold, and a stale final apply retains the draft without overwriting newer settings."
+        ]
+      },
+      "display": {
+        "summary": "Authorize verified local T3 rules from the desktop",
+        "production": [
+          400,
+          600
+        ],
+        "tests": [
+          380,
+          570
+        ]
+      }
+    },
+    {
       "id": "snoozap/8.3",
       "parent": "snoozap/8",
       "state": "planned",
@@ -675,7 +800,7 @@
           "tests/windows/setup_test.go"
         ],
         "dependencies": [
-          "snoozap/8.2"
+          "snoozap/8.2.2"
         ],
         "acceptance": [
           "Startup opt-in installs only the current-user entry, disable removes it, and failures do not claim success"
