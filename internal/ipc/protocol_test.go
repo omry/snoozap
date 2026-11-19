@@ -146,6 +146,77 @@ func TestClientSharesOwnerStateAndDetachDoesNotStopIt(t *testing.T) {
 	}
 }
 
+func TestConfigurationRevisionRejectsStaleIPCApply(t *testing.T) {
+	e := testEngine(t)
+	c := NewClient(testDial(t, e))
+	defer c.Close(context.Background())
+	initial, err := c.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Execute(context.Background(), model.Command{Operation: "monitor", Monitoring: false}); err != nil {
+		t.Fatal(err)
+	}
+	candidate := config.Empty()
+	stale := initial.ConfigurationRevision
+	if _, err := c.Execute(context.Background(), model.Command{Operation: "config", Configuration: &candidate, ConfigurationRevision: &stale}); err == nil {
+		t.Fatal("stale configuration was accepted")
+	}
+	current, err := c.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Monitoring {
+		t.Fatal("stale configuration restored monitoring")
+	}
+}
+
+func TestConfigurationRevisionRejectsDraftFromPreviousOwner(t *testing.T) {
+	ctx := context.Background()
+	first := testEngine(t)
+	oldClient := NewClient(testDial(t, first))
+	old, err := oldClient.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldClient.Close(ctx)
+	if err := first.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Empty()
+	cfg.Settings.Monitoring = false
+	saves := 0
+	second := engine.New(ctx, testPower{}, nil, "", engine.Options{Configuration: cfg, Save: func(config.Config) error { saves++; return nil }})
+	t.Cleanup(func() { second.Close(ctx) })
+	client := NewClient(testDial(t, second))
+	t.Cleanup(func() { client.Close(ctx) })
+	current, err := client.Execute(ctx, model.Command{Operation: "mode", Mode: model.Awake, Duration: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.ConfigurationRevision == old.ConfigurationRevision {
+		t.Fatal("revision was reused after owner restart")
+	}
+	candidate := config.Empty()
+	if _, err := client.Execute(ctx, model.Command{Operation: "config", Configuration: &candidate, ConfigurationRevision: &old.ConfigurationRevision}); err == nil {
+		t.Fatal("previous owner's draft was accepted")
+	}
+	after, err := client.Snapshot(ctx)
+	if err != nil || after.Monitoring || saves != 0 || after.ConfigurationRevision != current.ConfigurationRevision || after.Deadline == nil || !after.Deadline.Equal(*current.Deadline) {
+		t.Fatalf("stale save changed owner state: %+v, saves=%d, err=%v", after, saves, err)
+	}
+	for range 2 {
+		saved, err := client.Execute(ctx, model.Command{Operation: "config", Configuration: &cfg, ConfigurationRevision: &after.ConfigurationRevision})
+		if err != nil || saved.ConfigurationRevision == after.ConfigurationRevision {
+			t.Fatalf("current save did not advance revision: %+v, %v", saved, err)
+		}
+		after = saved
+	}
+	if saves != 2 {
+		t.Fatalf("save count = %d, want 2", saves)
+	}
+}
+
 type countedService struct {
 	model.Service
 	clears atomic.Int32
