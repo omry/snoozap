@@ -8,9 +8,9 @@ import { mount } from "./dist/status.js";
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function documentValue() {
-  return { configuration: '{"schema_version":1,"probes":{"http":{"type":"http","enabled":true,"on_startup_unknown":"wait","on_error":"retain","grace_seconds":60,"interval_ms":5000,"timeout_ms":2000,"url":"http://localhost:8080/","pointer":"/count","operator":"equals","value":9007199254740993.125,"credential_headers":{"Authorization":"opaque-ref"}}},"rules":[{"id":"keep","enabled":true,"when":{"not":{"any":[{"probe":"http"}]}}}],"settings":{"monitoring":true,"battery":{"ac_only":false,"floor_percent":20,"resume_percent":25}}}', comparisons: { http: "9007199254740993.125" } };
+  return { configuration: '{"schema_version":1,"probes":{"http":{"type":"http","enabled":true,"on_startup_unknown":"wait","on_error":"retain","grace_seconds":60,"interval_ms":5000,"timeout_ms":2000,"url":"http://localhost:8080/","pointer":"/count","operator":"equals","value":9007199254740993.125,"credential_headers":{"Authorization":"opaque-ref"}}},"rules":[{"id":"keep","enabled":true,"when":{"not":{"any":[{"probe":"http"}]}}}],"settings":{"monitoring":true,"battery":{"ac_only":false,"floor_percent":20,"resume_percent":25}}}', comparisons: { http: "9007199254740993.125" }, configuration_revision: 1 };
 }
-function fixture(t, handler = async (name, args) => name === "SetupRead" ? documentValue() : {}) {
+function fixture(t, handler = async (name, args) => name === "SetupRead" ? documentValue() : name === "SetupApply" ? { State: { Snapshot: { configuration_revision: 2 } } } : {}) {
   const dom = new JSDOM(html, { url: "http://wails.localhost/", pretendToBeVisual: true }), calls = [];
   const fetcher = async (url, init) => {
     const body = JSON.parse(init.body); calls.push({ url, init, name: body.args.methodName.split(".").at(-1), args: body.args.args });
@@ -56,6 +56,18 @@ test("configuration uses exact-origin bounded fixed calls and one explicit full 
   const mutations = f.calls.filter(call => call.name === "SetupApply"); assert.equal(mutations.length, 1);
   assert.equal(JSON.parse(mutations[0].args[0]).rules[0].id, "edited");
   assert.match(mutations[0].args[0], /9007199254740993\.125/);
+  assert.match(f.doc.getElementById("setup-message").textContent, /Configuration saved/);
+});
+test("a successful save advances the draft revision for the next edit", async t => {
+  let revision = 1;
+  const f = fixture(t, async (name) => name === "SetupRead" ? documentValue() : name === "SetupApply" ? { State: { Snapshot: { configuration_revision: ++revision } } } : {});
+  await tick();
+  input(f, "Rule ID", "first"); f.doc.getElementById("save-configuration").click(); await tick(); await tick();
+  input(f, "Rule ID", "second"); f.doc.getElementById("save-configuration").click(); await tick(); await tick();
+  const mutations = f.calls.filter(call => call.name === "SetupApply");
+  assert.equal(mutations.length, 2);
+  assert.equal(mutations[0].args[1], 1);
+  assert.equal(mutations[1].args[1], 2);
   assert.match(f.doc.getElementById("setup-message").textContent, /Configuration saved/);
 });
 test("invalid scalar prevents dispatch and failed or uncertain saves retain all drafts without replay", async t => {

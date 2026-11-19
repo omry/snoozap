@@ -2,7 +2,7 @@ import { renderRules, type Draft } from "./rules.js";
 import { renderSettings } from "./settings.js";
 import { mountHistory, type Call } from "./history.js";
 
-export function readDraft(value: { configuration: string; comparisons: Record<string, string> }): Draft {
+export function readDraft(value: { configuration: string; comparisons: Record<string, string>; configuration_revision: number }): Draft {
   const draft = JSON.parse(value.configuration) as Draft;
   if (draft.schema_version !== 1 || !draft.probes || !Array.isArray(draft.rules)) throw Error("Invalid configuration");
   for (const [id, probe] of Object.entries(draft.probes)) {
@@ -44,7 +44,7 @@ export function mountSetup(doc: Document, fetcher: (url: string, init: RequestIn
   const element = <T extends HTMLElement>(id: string) => doc.getElementById(id) as T;
   const form = element<HTMLFormElement>("configuration"), fields = element<HTMLFieldSetElement>("configuration-fields");
   const message = element("setup-message"), save = element<HTMLButtonElement>("save-configuration"), reload = element<HTMLButtonElement>("reload-configuration");
-  let draft: Draft | undefined, busy = false, stopped = false, id = 0, dirty = false;
+	let draft: Draft | undefined, configurationRevision = 0, busy = false, stopped = false, id = 0, dirty = false;
   const pending = new Set<AbortController>();
   const call: Call = async (method, args = []) => {
     if (stopped) throw Error("Closed");
@@ -64,9 +64,11 @@ export function mountSetup(doc: Document, fetcher: (url: string, init: RequestIn
     if (busy || stopped) return;
     busy = true; reload.disabled = true; fields.disabled = true; save.disabled = true;
     try {
-      const next = readDraft(await call("SetupRead") as Parameters<typeof readDraft>[0]);
+      const document = await call("SetupRead") as Parameters<typeof readDraft>[0];
+      const next = readDraft(document);
       if (stopped) return;
       draft = next;
+      configurationRevision = document.configuration_revision;
       renderRules(doc, element("rules-panel"), draft, changed, text => { message.textContent = text; });
       renderSettings(doc, element("settings-panel"), draft, changed);
       dirty = false; message.textContent = "Saved configuration loaded.";
@@ -79,9 +81,14 @@ export function mountSetup(doc: Document, fetcher: (url: string, init: RequestIn
     void (async () => {
       busy = true; fields.disabled = true; save.disabled = true; reload.disabled = true;
       try {
-        await call("SetupApply", [writeDraft(draft!)]);
+        const result = await call("SetupApply", [writeDraft(draft!), configurationRevision]) as {
+          State?: { Snapshot?: { configuration_revision?: number } };
+        };
+        const nextRevision = result.State?.Snapshot?.configuration_revision;
+        if (typeof nextRevision !== "number" || !Number.isSafeInteger(nextRevision) || nextRevision < 0) throw Error("Save revision unavailable");
+        configurationRevision = nextRevision;
         if (!stopped) { dirty = false; message.textContent = "Configuration saved. Selected mode and timer are unchanged."; }
-      } catch { if (!stopped) message.textContent = "Save not confirmed. Drafts are retained. Check status and reload saved configuration before trying again. Check rule references, probe timings, JSON scalar and battery thresholds."; }
+      } catch { if (!stopped) message.textContent = "Save not confirmed. Settings changed elsewhere or the candidate was rejected. Your draft is retained. Reload before trying again."; }
       finally { busy = false; if (!stopped) { fields.disabled = false; save.disabled = false; reload.disabled = false; } }
     })();
   });
