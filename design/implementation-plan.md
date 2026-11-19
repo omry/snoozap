@@ -1,7 +1,7 @@
 ---
 plan_key: snoozap
 slice_convention: hierarchical-v1
-slice_inventory: {"executable": false, "path": "slices.json", "sha256": "9ff526df0ea5ff96bdc3601eeefa3cb8c33a8d49f487b8741d05e4d4cedbd6d4"}
+slice_inventory: {"executable": false, "path": "slices.json", "sha256": "deecc61f231633b6f283812f71f8a91db5c7999ccfe93e26a14f1a49b292a8f0"}
 ---
 # SnooZap implementation plan
 
@@ -405,6 +405,17 @@ become a second background scheduler. Setup must preserve current manual mode
 and timer. Editing rules uses the exact approved ALL/ANY/NOT grammar. First
 launch has no implicit rule and manual control remains visible throughout setup.
 
+Desktop setup is delivered in two independently testable leaves under replaced
+slice 8.2. Slice 8.2.1 owns native/WSL application selection and the shared bounded
+owner/IPC/bridge setup and one-shot Test plumbing. It retains 8.1 and requires 8.4.1
+before implementation. Slice 8.2.2 follows 8.2.1 and adds verified local T3 setup,
+system-browser authorization and protected credential/binding lifecycle using
+that plumbing. Both preserve drafts, configuration revisions and manual timers;
+observational Test never enables a rule or acquires a hold. Slice 8.3 follows
+8.2.2. The replaced 8.2 entry retains its original admitted intent for history;
+its children own the delivered behavior and divide its existing line envelope
+without counting shared plumbing twice.
+
 Tray primary click opens/focuses the window; secondary/keyboard invocation shows
 quick controls. Close hides; Quit stops all owned runtime work. Autostart is
 explicit opt-in, current-user only, and cleared when disabled. Do not change
@@ -602,7 +613,7 @@ dependencies and disposable probes. Do not use added-plus-removed edit churn.
 Shared foundations/tests are counted once in their owning Windows prerequisite.
 Every canonical slice has separate inclusive production/test line ranges.
 
-Project envelope: **11,760–18,760 production lines** and **13,080–21,080 test
+Project envelope: **11,880–19,020 production lines** and **13,260–21,440 test
 lines**. This includes a conditional Mac closed-lid envelope of 800–1,600 production
 and 900–1,800 test lines, not a chosen mechanism or a ready implementation task.
 The design investigation counts zero shipped/test code because it delivers
@@ -613,7 +624,7 @@ slice cap, time estimate or new accounting mechanism.
 Windows slices 1–12 and the intervening CI slice 19 are authorized for delivery
 under the retained campaign,
 subject to their explicit engineering, current review and physical acceptance
-prerequisites. This authority does not permit merge or release.
+prerequisites. Slice 8.4 is replaced by 8.4.1, which retains its complete stale-save behavior and line envelope and explicitly owns the frontend save-revision regression. The original 8.4 intent and published source remain history. Slice 8.4.1 is the required follow-up to 8.1 and owns the shared revision fields needed to reject stale desktop configuration saves before application/T3 setup in 8.2.1 and 8.2.2 proceeds. Existing source may be reused only after current admission and enrollment; its earlier publication does not establish campaign acceptance or a historical pre-work check. This authority does not permit merge or release.
 Slice 13 requires completed Windows and real Mac access. Slices 15–16 are not ready
 until the retained Mac mechanism decision, updated engineering and renewed affected
 review/approval exist. Linux slices 17–18 depend on complete Mac delivery. The
