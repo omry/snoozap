@@ -748,6 +748,7 @@
         "responsibility": "Deliver Add application on the existing editor using current-user native application selection or an explicitly selected supported local WSL distribution. Explain the accepted stop-after-preflight race. Own the bounded setup/test operation plumbing through the owning runtime, local IPC and exact-origin desktop bridge once; preserve the existing strict operation allowlist. One-shot application Test uses existing adapters without another scheduler, enabling a rule or acquiring a hold. Apply the validated candidate with the configuration revision from the current draft, retaining the stale-save protection from 8.4. Cancellation, failed preflight, invalid candidates and stale applies preserve configuration and manual deadline; success creates one understandable enabled application rule with its failure policy. No T3 authorization, remote environments, general command dispatcher or arbitrary scripts.",
         "paths": [
           "frontend/setup.ts",
+          "frontend/rules.ts",
           "frontend/setup.test.ts",
           "internal/desktop/setup.go",
           "internal/desktop/app.go",
