@@ -17,16 +17,20 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/omry/snoozap/frontend"
+	"github.com/omry/snoozap/internal/app"
 	"github.com/omry/snoozap/internal/config"
 	"github.com/omry/snoozap/internal/desktop"
 	"github.com/omry/snoozap/internal/engine"
 	"github.com/omry/snoozap/internal/history"
+	"github.com/omry/snoozap/internal/ipc"
 	"github.com/omry/snoozap/internal/model"
+	native "github.com/omry/snoozap/internal/platform/windows"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/w32"
 )
@@ -42,14 +46,241 @@ func setupConfig(t *testing.T) config.Config {
 	return cfg
 }
 
+type setupApplicationService struct{ model.Service }
+
+func (s setupApplicationService) SetupApplication(ctx context.Context, request model.ApplicationRequest) (model.ApplicationResult, error) {
+	value := model.ApplicationResult{Items: []string{}}
+	switch request.Action {
+	case "sources":
+		value.Items = []string{"FixtureUbuntu"}
+	case "list":
+		value.Items = []string{`C:\fixture\Editor.exe`}
+	case "test":
+		value.Observation = &model.Observation{State: model.Active}
+	}
+	return value, ctx.Err()
+}
+
 func setupBridge(t *testing.T, options engine.Options) (*desktop.StatusBridge, *desktop.Controller, *engine.Engine) {
 	t.Helper()
 	service := engine.New(context.Background(), &trayPower{}, nil, "", options)
 	updates, update := trayUpdates()
-	controller := desktop.NewController(context.Background(), service, update)
+	controller := desktop.NewController(context.Background(), setupApplicationService{service}, update)
 	t.Cleanup(func() { _ = controller.Close() })
 	waitTray(t, updates, func(s desktop.State) bool { return s.Connected })
 	return desktop.NewStatusBridge(controller), controller, service
+}
+
+func TestApplicationSetupTestAndCancelAreObservational(t *testing.T) {
+	bridge, _, service := setupBridge(t, engine.Options{Configuration: setupConfig(t), Save: func(config.Config) error { t.Fatal("test saved config"); return nil }})
+	before, err := bridge.Mode(model.Awake, "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := bridge.SetupRead()
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := bridge.ApplicationSetup(model.ApplicationRequest{Action: "test", Executable: `C:\fixture\Editor.exe`})
+	if err != nil || value.Observation == nil || value.Observation.State != model.Active {
+		t.Fatal(value, err)
+	}
+	after, err := bridge.SetupRead()
+	snapshot, _ := service.Snapshot(context.Background())
+	if err != nil || !reflect.DeepEqual(doc, after) || !snapshot.Deadline.Equal(*before.State.Snapshot.Deadline) {
+		t.Fatal("setup modified configuration or manual timer", err)
+	}
+}
+
+type blockingApplicationSetup struct {
+	model.Service
+	entered chan struct{}
+}
+
+func (s blockingApplicationSetup) SetupApplication(ctx context.Context, _ model.ApplicationRequest) (model.ApplicationResult, error) {
+	close(s.entered)
+	<-ctx.Done()
+	return model.ApplicationResult{}, ctx.Err()
+}
+
+func TestApplicationSetupSerializesAndClosesPendingWork(t *testing.T) {
+	service := blockingApplicationSetup{Service: engine.New(context.Background(), &trayPower{}, nil, ""), entered: make(chan struct{})}
+	controller := desktop.NewController(context.Background(), service, func(desktop.State) {})
+	t.Cleanup(func() { controller.Close() })
+	bridge, done := desktop.NewStatusBridge(controller), make(chan error, 1)
+	go func() { _, err := bridge.ApplicationSetup(model.ApplicationRequest{Action: "list"}); done <- err }()
+	select {
+	case <-service.entered:
+	case <-time.After(time.Second):
+		t.Fatal("setup did not start")
+	}
+	if _, err := bridge.ApplicationSetup(model.ApplicationRequest{Action: "list"}); !errors.Is(err, model.ErrUnavailable) {
+		t.Fatal("concurrent setup admitted", err)
+	}
+	if _, err := bridge.Mode(model.Awake, "1h"); !errors.Is(err, model.ErrUnavailable) {
+		t.Fatal("concurrent command admitted", err)
+	}
+	if err := controller.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancelled setup confirmed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("close retained setup")
+	}
+}
+
+func TestApplicationSetupFixedWSLInventoryAndPreflight(t *testing.T) {
+	var calls [][]string
+	wsl := native.WSL{Distribution: "FixtureUbuntu", Run: func(ctx context.Context, args []string, input []byte) ([]byte, error) {
+		calls = append(calls, args)
+		switch {
+		case args[0] == "--list":
+			return wslList("FixtureUbuntu\r\n"), nil
+		case args[3] == "/usr/bin/id":
+			return []byte("1000\n"), nil
+		case args[3] == "/usr/bin/ps":
+			return []byte("/usr/bin/ps\n/opt/App One/worker\n/opt/App One/worker\n"), nil
+		}
+		t.Fatalf("unexpected command: %q", args)
+		return nil, nil
+	}}
+	sources, err := wsl.ApplicationSources(context.Background())
+	if err != nil || !reflect.DeepEqual(sources, []string{"FixtureUbuntu"}) {
+		t.Fatal(sources, err)
+	}
+	items, err := wsl.Applications(context.Background())
+	if err != nil || !reflect.DeepEqual(items, []string{"/opt/App One/worker"}) {
+		t.Fatal(items, err)
+	}
+	for i, args := range calls {
+		if args[0] == "--distribution" && (i == 0 || !reflect.DeepEqual(calls[i-1], []string{"--list", "--running", "--quiet"})) {
+			t.Fatal("inspection without preflight", calls)
+		}
+	}
+	wsl.Run = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if args[0] != "--list" {
+			t.Fatal("stopped source inspected")
+		}
+		return wslList("OtherUbuntu\r\n"), nil
+	}
+	if _, err := wsl.Applications(context.Background()); err == nil {
+		t.Fatal("stopped source confirmed")
+	}
+	for _, rows := range []string{"/usr/bin/ps\n-\n", "/usr/bin/ps\n/tmp/deleted (deleted)\n", "/usr/bin/ps\n/truncated", "/other/worker\n", "/usr/bin/ps\n\xff\n"} {
+		wsl.Run = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+			if args[0] == "--list" {
+				return wslList("FixtureUbuntu\r\n"), nil
+			}
+			if args[3] == "/usr/bin/id" {
+				return []byte("1000\n"), nil
+			}
+			return []byte(rows), nil
+		}
+		if _, err := wsl.Applications(context.Background()); err == nil {
+			t.Fatalf("incomplete inventory admitted: %q", rows)
+		}
+	}
+}
+
+func TestNativeApplicationSetupDirectAndAttached(t *testing.T) {
+	requireNative(t)
+	service, err := app.Start(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { service.Close(context.Background()) })
+	client := ipc.NewClient(ipc.Dial)
+	defer client.Close(context.Background())
+	executable, _ := os.Executable()
+	for _, setup := range []model.ApplicationSetup{service.(model.ApplicationSetup), client} {
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := setup.SetupApplication(cancelled, model.ApplicationRequest{Action: "list"}); err == nil {
+			t.Fatal("cancelled inventory confirmed")
+		}
+		items, err := setup.SetupApplication(context.Background(), model.ApplicationRequest{Action: "list"})
+		found := false
+		for _, item := range items.Items {
+			found = found || strings.EqualFold(item, executable)
+		}
+		if err != nil || !found {
+			t.Fatal("current-user executable missing", items, err)
+		}
+		value, err := setup.SetupApplication(context.Background(), model.ApplicationRequest{Action: "test", Executable: executable})
+		if err != nil || value.Observation == nil || value.Observation.State != model.Active {
+			t.Fatal(value, err)
+		}
+		if distro := os.Getenv("SNOOZAP_WSL_DISTRIBUTION"); distro != "" {
+			sources, err := setup.SetupApplication(context.Background(), model.ApplicationRequest{Action: "sources"})
+			found := false
+			for _, source := range sources.Items {
+				found = found || source == distro
+			}
+			if err != nil || !found {
+				t.Fatal("running WSL source missing", sources, err)
+			}
+			value, err := setup.SetupApplication(context.Background(), model.ApplicationRequest{Action: "list", Distribution: distro})
+			if err != nil {
+				t.Fatal("live WSL inventory unavailable", value, err)
+			}
+		}
+	}
+	if os.Getenv("SNOOZAP_WSL_DISTRIBUTION") != "" {
+		start := make(chan struct{})
+		var workers sync.WaitGroup
+		var accepted, busy atomic.Int32
+		for range 16 {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				<-start
+				_, err := service.(model.ApplicationSetup).SetupApplication(context.Background(), model.ApplicationRequest{Action: "sources"})
+				if err == nil {
+					accepted.Add(1)
+				} else if errors.Is(err, model.ErrUnavailable) {
+					busy.Add(1)
+				} else {
+					t.Error(err)
+				}
+			}()
+		}
+		close(start)
+		workers.Wait()
+		if accepted.Load() == 0 || busy.Load() == 0 {
+			t.Fatal("concurrent setup limit not exercised", accepted.Load(), busy.Load())
+		}
+	}
+}
+
+func TestNativeCancelledOwnerClosePreservesApplicationSetup(t *testing.T) {
+	requireNative(t)
+	service, err := app.Start(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { service.Close(context.Background()) })
+	before, err := service.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := service.Close(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatal("cancelled stop result", err)
+	}
+	after, err := service.Snapshot(context.Background())
+	if err != nil || before.ConfigurationRevision != after.ConfigurationRevision || before.Mode != after.Mode || !reflect.DeepEqual(before.Deadline, after.Deadline) {
+		t.Fatal("cancelled close changed owner", err)
+	}
+	for range 3 {
+		if _, err := service.(model.ApplicationSetup).SetupApplication(context.Background(), model.ApplicationRequest{Action: "list"}); err != nil {
+			t.Fatal("cancelled shutdown disabled setup", err)
+		}
+	}
 }
 
 func setupRevision(t *testing.T, service model.Service) string {
@@ -351,12 +582,15 @@ func TestSetupClearSerializesWithModesAndCancelsWithController(t *testing.T) {
 }
 
 func TestSetupGuardBindsOnlyExactMaintenanceOperations(t *testing.T) {
-	for _, method := range []string{"SetupRead", "SetupApply", "HistoryRead", "HistoryClear"} {
+	for _, method := range []string{"SetupRead", "SetupApply", "HistoryRead", "HistoryClear", "ApplicationSetup"} {
 		for _, origin := range []string{"http://wails.localhost", "null", "http://localhost", "https://evil.test"} {
 			for _, arityOK := range []bool{true, false} {
 				args := []any{}
 				if method == "SetupApply" {
 					args = append(args, setupConfiguration, "owner:1")
+				}
+				if method == "ApplicationSetup" {
+					args = append(args, model.ApplicationRequest{Action: "list"})
 				}
 				if !arityOK {
 					args = append(args, "extra")
@@ -373,6 +607,18 @@ func TestSetupGuardBindsOnlyExactMaintenanceOperations(t *testing.T) {
 					t.Fatal(method, origin, arityOK, out.Code)
 				}
 			}
+		}
+	}
+	for _, raw := range []string{`{"action":"list","action":"sources"}`, `{"action":"list","distribution":null}`, `{"action":"list","shell":"cmd"}`, `{"Action":"list"}`, `{"action":"test","executable":"\ud800"}`} {
+		body := statusCall("ApplicationSetup", json.RawMessage(raw))
+		h := desktop.StatusMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("invalid application request dispatched") }))
+		r := httptest.NewRequest("POST", "http://wails.localhost/wails/runtime", strings.NewReader(body))
+		r.Header.Set("Origin", "http://wails.localhost")
+		r.Header.Set("Content-Type", "application/json")
+		out := httptest.NewRecorder()
+		h.ServeHTTP(out, r)
+		if out.Code != http.StatusForbidden {
+			t.Fatal(raw, out.Code)
 		}
 	}
 	for _, path := range []string{"/setup.js", "/rules.js", "/settings.js", "/history.js"} {
@@ -480,8 +726,8 @@ func TestSetupWebviewFixtureChild(t *testing.T) {
 		case <-time.After(25 * time.Second):
 			failure = errors.New("setup fixture timed out")
 		}
-		if failure == nil && saves.Load() != 1 {
-			failure = fmt.Errorf("expected one config save, got%d", saves.Load())
+		if failure == nil && saves.Load() != 2 {
+			failure = fmt.Errorf("expected two explicit config saves, got%d", saves.Load())
 		}
 		if failure == nil {
 			data, err := service.ExportConfig(context.Background())
@@ -498,7 +744,7 @@ func TestSetupWebviewFixtureChild(t *testing.T) {
 	if err := <-completed; err != nil {
 		t.Fatal(err)
 	}
-	t.Log("SETUP_NATIVE_PASSED: bundled rules/settings/history; one full candidate; exact decimal; retained timer; rejected invalid candidate; fake power only")
+	t.Log("SETUP_NATIVE_PASSED: bundled application/rules/settings/history; two explicit candidates; exact decimal; retained timer; rejected invalid candidate; fake power only")
 }
 
 const setupNativeDriver = `
@@ -522,6 +768,14 @@ const click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=
 HTMLAnchorElement.prototype.click=click;const data=await exported.text();if(data.includes('opaque-ref')||data.includes('127.0.0.1')||data.includes('/private')||!JSON.parse(data).records.length)throw Error('unsafe export');
 [...doc.querySelectorAll('#history-panel button')].find(n=>n.textContent==='Clear history').click();await wait(()=>doc.querySelector('#history-panel [role="status"]').textContent==='0 records after clear.');
 if((await call('Read')).State.Snapshot.deadline!==before.State.Snapshot.deadline)throw Error('history changed timer');
+doc.querySelector('[data-view="rules"]').click();doc.getElementById('reload-configuration').click();await wait(()=>doc.getElementById('setup-message').textContent==='Saved configuration loaded.');
+const press=text=>[...doc.querySelectorAll('button')].find(n=>n.textContent===text).click();
+press('Add application');press('Refresh applications');await wait(()=>[...doc.querySelectorAll('label')].find(n=>n.firstChild.textContent==='Executable').querySelector('select').options.length>0);
+press('Test application');await wait(()=>doc.querySelector('#rules-panel section').textContent.includes('Application is running.'));
+if((await call('Read')).State.Snapshot.configuration_revision!==after.State.Snapshot.configuration_revision)throw Error('Test saved settings');
+press('Add application rule to draft');doc.getElementById('save-configuration').click();await wait(()=>doc.getElementById('setup-message').textContent.includes('Configuration saved'));
+const saved=await call('SetupRead'),cfg=JSON.parse(saved.configuration);if(!cfg.probes.application_1.enabled||!cfg.rules.some(r=>r.id==='application_1'&&r.enabled))throw Error('application rule missing');
+if((await call('Read')).State.Snapshot.deadline!==before.State.Snapshot.deadline)throw Error('application changed timer');
 await call('Read',[],'setup-fixture-passed');
 })().catch(async error=>{await fetch('/wails/runtime',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({object:0,method:0,args:{'call-id':'setup-fixture-failed-'+String(error).slice(0,35),methodName:'github.com/omry/snoozap/internal/desktop.StatusBridge.Read',args:[]}})})});
 `

@@ -1,9 +1,15 @@
 package model
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/omry/snoozap/internal/config"
 	"github.com/omry/snoozap/internal/history"
@@ -60,6 +66,87 @@ type Observation struct {
 	State      State
 	ErrorCode  string
 	StatusCode int
+}
+
+// ApplicationSetup is an optional, observational capability of the owner.
+// These fixed operations never execute a selected application or change rules.
+type ApplicationRequest struct {
+	Action       string `json:"action"`
+	Distribution string `json:"distribution,omitempty"`
+	Executable   string `json:"executable,omitempty"`
+}
+
+func (r *ApplicationRequest) UnmarshalJSON(data []byte) error {
+	if len(data) > 65536 || config.ValidateJSONEncoding(data) != nil {
+		return ErrInvalidInput
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	first, err := d.Token()
+	if err != nil || first != json.Delim('{') {
+		return ErrInvalidInput
+	}
+	value, seen := ApplicationRequest{}, map[string]bool{}
+	for d.More() {
+		key, err := d.Token()
+		name, ok := key.(string)
+		if err != nil || !ok || seen[name] {
+			return ErrInvalidInput
+		}
+		seen[name] = true
+		token, err := d.Token()
+		text, ok := token.(string)
+		if err != nil || !ok {
+			return ErrInvalidInput
+		}
+		switch name {
+		case "action":
+			value.Action = text
+		case "distribution":
+			value.Distribution = text
+		case "executable":
+			value.Executable = text
+		default:
+			return ErrInvalidInput
+		}
+	}
+	if last, err := d.Token(); err != nil || last != json.Delim('}') {
+		return ErrInvalidInput
+	}
+	if _, err := d.Token(); err != io.EOF || !value.Valid() {
+		return ErrInvalidInput
+	}
+	*r = value
+	return nil
+}
+
+func (r ApplicationRequest) Valid() bool {
+	if len(r.Distribution) > 255 || !utf8.ValidString(r.Distribution) || strings.HasPrefix(r.Distribution, "-") || strings.ContainsFunc(r.Distribution, unicode.IsControl) {
+		return false
+	}
+	switch r.Action {
+	case "sources":
+		return r.Distribution == "" && r.Executable == ""
+	case "list":
+		return r.Executable == ""
+	case "test":
+		if r.Executable == "" || len(r.Executable) > 32768 || !utf8.ValidString(r.Executable) {
+			return false
+		}
+		cfg := config.Empty()
+		cfg.Probes["application"] = config.Probe{Type: "process", Executable: r.Executable, WSLDistribution: r.Distribution,
+			IntervalMS: 5000, TimeoutMS: 2000, GraceSeconds: 60, OnStartupUnknown: "wait", OnError: "retain"}
+		return config.Validate(cfg) == nil
+	}
+	return false
+}
+
+type ApplicationResult struct {
+	Items       []string     `json:"items"`
+	Observation *Observation `json:"observation,omitempty"`
+}
+
+type ApplicationSetup interface {
+	SetupApplication(context.Context, ApplicationRequest) (ApplicationResult, error)
 }
 type Probe interface {
 	Check(context.Context) Observation

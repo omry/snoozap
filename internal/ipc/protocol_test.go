@@ -25,6 +25,41 @@ import (
 
 type testPower struct{}
 
+type applicationService struct {
+	model.Service
+	calls atomic.Int32
+}
+
+func (s *applicationService) SetupApplication(ctx context.Context, r model.ApplicationRequest) (model.ApplicationResult, error) {
+	s.calls.Add(1)
+	return model.ApplicationResult{Items: []string{`C:\Editor.exe`}}, ctx.Err()
+}
+
+func TestApplicationSetupStrictBoundaryAndObservationalRoundTrip(t *testing.T) {
+	s := &applicationService{Service: testEngine(t)}
+	client := NewClient(testDial(t, s))
+	defer client.Close(context.Background())
+	before, _ := s.Execute(context.Background(), model.Command{Operation: "mode", Mode: model.Awake, Duration: time.Hour})
+	value, err := client.SetupApplication(context.Background(), model.ApplicationRequest{Action: "list"})
+	if err != nil || len(value.Items) != 1 || s.calls.Load() != 1 {
+		t.Fatal(value, err)
+	}
+	for _, raw := range []string{`null`, `{"action":"list","unknown":true}`, `{"Action":"list"}`, `{"action":"list","distribution":null}`, `{"action":"sources","distribution":"Ubuntu"}`, `{"action":"list","action":"test"}`, `{"action":"test","executable":"relative"}`, `{"action":"list","distribution":"\ud800"}`, `{"action":"shell"}`} {
+		_, failure := execute(context.Background(), s, request{Operation: "application-setup", Args: []byte(raw)})
+		if failure == nil || failure.Code != "invalid-input" {
+			t.Fatalf("admitted %s", raw)
+		}
+	}
+	after, _ := s.Snapshot(context.Background())
+	if s.calls.Load() != 1 || before.ConfigurationRevision != after.ConfigurationRevision || !before.Deadline.Equal(*after.Deadline) || before.NativeRequestAccepted != after.NativeRequestAccepted {
+		t.Fatal("application query mutated owner", before, after)
+	}
+	_, failure := execute(context.Background(), testEngine(t), request{Operation: "application-setup", Args: []byte(`{"action":"list"}`)})
+	if failure == nil || failure.Code != "unavailable" {
+		t.Fatal(failure)
+	}
+}
+
 func (testPower) SetRequired(context.Context, bool) error { return nil }
 func (testPower) Close() error                            { return nil }
 func testEngine(t *testing.T) *engine.Engine {
