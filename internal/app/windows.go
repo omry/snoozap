@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/omry/snoozap/internal/config"
 	"github.com/omry/snoozap/internal/engine"
@@ -21,11 +22,56 @@ import (
 
 type runtimeOwner struct {
 	model.Service
-	owner     *windows.Owner
-	lifecycle *windows.Lifecycle
-	listener  io.Closer
-	once      sync.Once
-	err       error
+	owner       *windows.Owner
+	lifecycle   *windows.Lifecycle
+	listener    io.Closer
+	once        sync.Once
+	err         error
+	setup       sync.Mutex
+	setupCtx    context.Context
+	setupCancel context.CancelFunc
+	processes   *windows.Processes
+}
+
+func (r *runtimeOwner) SetupApplication(ctx context.Context, request model.ApplicationRequest) (model.ApplicationResult, error) {
+	value := model.ApplicationResult{Items: []string{}}
+	if !request.Valid() {
+		return value, model.ErrInvalidInput
+	}
+	if !r.setup.TryLock() {
+		return value, model.ErrUnavailable
+	}
+	defer r.setup.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	stop := context.AfterFunc(r.setupCtx, cancel)
+	defer stop()
+	if _, err := r.Service.Snapshot(ctx); err != nil {
+		return value, model.ErrUnavailable
+	}
+	wsl := windows.WSL{Distribution: request.Distribution}
+	var err error
+	switch request.Action {
+	case "sources":
+		value.Items, err = wsl.ApplicationSources(ctx)
+	case "list":
+		if request.Distribution == "" {
+			value.Items, err = r.processes.Applications(ctx)
+		} else {
+			value.Items, err = wsl.Applications(ctx)
+		}
+	case "test":
+		var reader model.ProcessReader = r.processes
+		if request.Distribution != "" {
+			reader = wsl
+		}
+		observation := reader.Match(ctx, "", request.Executable)
+		value.Observation = &observation
+	}
+	if err != nil || ctx.Err() != nil {
+		return model.ApplicationResult{}, model.ErrUnavailable
+	}
+	return value, nil
 }
 
 func (r *runtimeOwner) Close(ctx context.Context) error {
@@ -33,6 +79,7 @@ func (r *runtimeOwner) Close(ctx context.Context) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
+	r.setupCancel()
 	r.once.Do(func() { r.err = errors.Join(r.listener.Close(), r.lifecycle.Close(), r.owner.Close()) })
 	return errors.Join(err, r.err)
 }
@@ -84,12 +131,16 @@ func Start(ctx context.Context, dir string) (model.Service, error) {
 	store := config.Store{Replace: func(data []byte) error { return windows.SaveConfig(dir, data) }}
 	options := engine.Options{Configuration: cfg, ReadPower: reader.ReadPower, Save: store.Save, Events: lifecycle.Events, Resolve: registry.Resolve}
 	service := engine.New(ctx, power, windows.Clock{}, message, options)
-	listener, err := ipc.Listen(ctx, service)
+	setupCtx, setupCancel := context.WithCancel(ctx)
+	runtime := &runtimeOwner{Service: service, owner: owner, lifecycle: lifecycle, setupCtx: setupCtx, setupCancel: setupCancel, processes: processes}
+	listener, err := ipc.Listen(ctx, runtime)
 	if err != nil {
+		setupCancel()
 		service.Close(context.Background())
 		lifecycle.Close()
 		owner.Close()
 		return nil, err
 	}
-	return &runtimeOwner{Service: service, owner: owner, lifecycle: lifecycle, listener: listener}, nil
+	runtime.listener = listener
+	return runtime, nil
 }

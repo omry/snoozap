@@ -12,6 +12,8 @@ export type Draft = {
   settings: { monitoring: boolean; battery: { ac_only: boolean; floor_percent: number; resume_percent: number } };
 };
 
+const WSL_RESTART_LIMITATION = "For WSL probes, running-state preflight is best-effort: if the distribution stops after preflight, inspection can restart it. SnooZap never automatically terminates a distribution.";
+
 export function node<K extends keyof HTMLElementTagNameMap>(doc: Document, tag: K, text = "") {
   const value = doc.createElement(tag); value.textContent = text; return value;
 }
@@ -40,7 +42,7 @@ export function field(doc: Document, parent: HTMLElement, label: string, value: 
 }
 
 export function renderRules(doc: Document, root: HTMLElement, draft: Draft, changed: () => void, message: (text: string) => void) {
-  root.replaceChildren(node(doc, "h2", "Rules"), node(doc, "p", "Edit conditions, then combine them with ALL, ANY or NOT. Changes take effect only after Save all changes. Native application selection and T3 sign-in will be available in a later delivery slice."));
+  root.replaceChildren(node(doc, "h2", "Rules"), node(doc, "p", "Edit conditions, then combine them with ALL, ANY or NOT. Changes take effect only after Save all changes. Use Add application to select and test a local executable. T3 sign-in will be available in a later delivery slice."));
   const redraw = () => renderRules(doc, root, draft, changed, message);
   const freshExpression = (): Expression => ({ probe: Object.keys(draft.probes)[0] ?? "" });
   const editExpression = (parent: HTMLElement, expression: Expression, replace: (value: Expression) => void, depth = 0) => {
@@ -99,7 +101,8 @@ export function renderRules(doc: Document, root: HTMLElement, draft: Draft, chan
       case "process":
         // Selector kind is retained. Native/WSL application discovery is 8.2.
         edit(probe.executable ? "Exact executable path" : "Process name", probe.executable ? "executable" : "name");
-        edit("WSL distribution (empty for Windows)", "wsl_distribution"); break;
+        edit("WSL distribution (empty for Windows)", "wsl_distribution");
+        box.append(node(doc, "p", WSL_RESTART_LIMITATION)); break;
       case "t3": edit("Existing local T3 environment", "local_environment"); break;
       case "power": edit("Power source", "source", ["ac", "battery"]); break;
       case "http":

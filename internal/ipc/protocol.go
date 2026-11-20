@@ -211,6 +211,16 @@ func execute(ctx context.Context, s model.Service, r request) (any, *wireError) 
 	var v any
 	var err error
 	switch r.Operation {
+	case "application-setup":
+		var a model.ApplicationRequest
+		if config.ValidateJSONEncoding(r.Args) != nil || decode(r.Args, &a) != nil || !a.Valid() {
+			return nil, invalid
+		}
+		setup, ok := s.(model.ApplicationSetup)
+		if !ok {
+			return nil, &wireError{"unavailable", "Application setup unavailable"}
+		}
+		v, err = setup.SetupApplication(ctx, a)
 	case "status", "history", "history-clear", "config-export", "stop":
 		if !none {
 			return nil, invalid
@@ -488,6 +498,15 @@ func (c *Client) History(ctx context.Context) (history.Snapshot, error) {
 func (c *Client) ClearHistory(ctx context.Context) error {
 	var v struct{}
 	return c.call(ctx, "history-clear", nil, &v)
+}
+
+func (c *Client) SetupApplication(ctx context.Context, request model.ApplicationRequest) (model.ApplicationResult, error) {
+	var value model.ApplicationResult
+	if !request.Valid() {
+		return value, model.ErrInvalidInput
+	}
+	err := c.call(ctx, "application-setup", request, &value)
+	return value, err
 }
 func (c *Client) ExportConfig(ctx context.Context) ([]byte, error) {
 	var data json.RawMessage
