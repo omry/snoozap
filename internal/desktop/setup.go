@@ -67,6 +67,25 @@ func (b *StatusBridge) SetupApply(candidate string, expectedRevision string) (St
 	return b.viewForSnapshot(snapshot), err
 }
 
+func (b *StatusBridge) ApplicationSetup(request model.ApplicationRequest) (model.ApplicationResult, error) {
+	c := b.controller
+	if !request.Valid() {
+		return model.ApplicationResult{}, model.ErrInvalidInput
+	}
+	setup, ok := c.service.(model.ApplicationSetup)
+	if !ok || !c.command.TryLock() {
+		return model.ApplicationResult{}, model.ErrUnavailable
+	}
+	defer c.command.Unlock()
+	ctx, cancel := context.WithTimeout(c.ctx, 4*time.Second)
+	defer cancel()
+	value, err := setup.SetupApplication(ctx, request)
+	if err != nil {
+		return model.ApplicationResult{}, errors.New("Application inventory or test unavailable")
+	}
+	return value, nil
+}
+
 func (b *StatusBridge) HistoryRead() (history.Snapshot, error) {
 	ctx, cancel := context.WithTimeout(b.controller.ctx, 5*time.Second)
 	defer cancel()

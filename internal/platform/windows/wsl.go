@@ -16,6 +16,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -138,6 +139,72 @@ func (w WSL) running(ctx context.Context) error {
 		return t3.ErrUnavailable
 	}
 	return nil
+}
+
+func (w WSL) ApplicationSources(ctx context.Context) ([]string, error) {
+	data, err := w.run(ctx, []string{"--list", "--running", "--quiet"}, nil)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := distributionLines(data)
+	if err != nil {
+		return nil, err
+	}
+	items, seen := []string{}, map[string]bool{}
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		key := strings.ToLower(line)
+		if !t3.Distribution(line) || seen[key] || len(items) >= 256 {
+			return nil, t3.ErrIncomplete
+		}
+		seen[key] = true
+		items = append(items, line)
+	}
+	sort.Strings(items)
+	return items, nil
+}
+
+func (w WSL) Applications(ctx context.Context) ([]string, error) {
+	data, err := w.inspect(ctx, "/usr/bin/id", []string{"-u"}, nil)
+	if err != nil {
+		return nil, err
+	}
+	uid := strings.TrimSuffix(string(data), "\n")
+	n, err := strconv.ParseUint(uid, 10, 32)
+	if err != nil || len(data) == 0 || !bytes.HasSuffix(data, []byte("\n")) || strconv.FormatUint(n, 10) != uid {
+		return nil, t3.ErrSchema
+	}
+	data, err = w.inspect(ctx, "/usr/bin/ps", []string{"-ww", "-u", uid, "-o", "exe="}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if !utf8.Valid(data) || len(data) > t3.MaxBytes || !bytes.HasSuffix(data, []byte("\n")) {
+		return nil, t3.ErrIncomplete
+	}
+	items, seen, self := []string{}, map[string]bool{}, false
+	for _, row := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+		if !self && row == "/usr/bin/ps" {
+			self = true
+			continue
+		}
+		if !strings.HasPrefix(row, "/") || strings.HasSuffix(row, " (deleted)") || strings.ContainsAny(row, "?\x00") || strings.ContainsFunc(row, unicode.IsControl) {
+			return nil, t3.ErrIncomplete
+		}
+		if !seen[row] {
+			if len(items) >= 256 {
+				return nil, t3.ErrIncomplete
+			}
+			seen[row] = true
+			items = append(items, row)
+		}
+	}
+	if !self {
+		return nil, t3.ErrIncomplete
+	}
+	sort.Strings(items)
+	return items, nil
 }
 
 func (w WSL) inspect(ctx context.Context, command string, args []string, input []byte) ([]byte, error) {

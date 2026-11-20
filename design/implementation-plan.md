@@ -1,7 +1,7 @@
 ---
 plan_key: snoozap
 slice_convention: hierarchical-v1
-slice_inventory: {"executable": false, "path": "slices.json", "sha256": "deecc61f231633b6f283812f71f8a91db5c7999ccfe93e26a14f1a49b292a8f0"}
+slice_inventory: {"executable": false, "path": "slices.json", "sha256": "7ebeb5974f5b79b3f4faf4a2f248cf74fe6e9849fa10cdf99a4450e6346943af"}
 ---
 # SnooZap implementation plan
 

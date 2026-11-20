@@ -7,6 +7,7 @@ import (
 	"errors"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -157,4 +158,52 @@ func (p *Processes) Match(ctx context.Context, name, executable string) model.Ob
 		return model.Observation{State: model.Active}
 	}
 	return model.Observation{State: model.Inactive}
+}
+
+// Applications lists known current-user executable paths. Inaccessible and
+// exited processes are omitted; this inventory does not assert their absence.
+func (p *Processes) Applications(ctx context.Context) ([]string, error) {
+	if p == nil || p.sid == "" {
+		return nil, model.ErrUnavailable
+	}
+	h, err := syscall.CreateToolhelp32Snapshot(2, 0)
+	if err != nil {
+		return nil, model.ErrUnavailable
+	}
+	defer syscall.CloseHandle(h)
+	var entry syscall.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	seen := map[string]string{}
+	for err = syscall.Process32First(h, &entry); err == nil; err = syscall.Process32Next(h, &entry) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		process, e := syscall.OpenProcess(0x1000, false, entry.ProcessID)
+		if e != nil {
+			continue
+		}
+		sid, e := processSID(process)
+		if e == nil && sid == p.sid {
+			path, e := processPath(process)
+			if e == nil {
+				path, e = normalizedExecutable(path)
+			}
+			if e == nil {
+				seen[strings.ToLower(path)] = path
+			}
+		}
+		syscall.CloseHandle(process)
+		if len(seen) > 256 {
+			return nil, model.ErrUnavailable
+		}
+	}
+	if err != syscall.ERROR_NO_MORE_FILES {
+		return nil, model.ErrUnavailable
+	}
+	items := make([]string, 0, len(seen))
+	for _, path := range seen {
+		items = append(items, path)
+	}
+	sort.Strings(items)
+	return items, nil
 }
